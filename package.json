@@ -1,0 +1,30 @@
+{
+  "name": "@corbitsdev/cli",
+  "version": "0.0.1",
+  "description": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "corbits": "dist/index.js"
+  },
+  "scripts": {
+    "build": "make build",
+    "lint": "make lint",
+    "format": "make format"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "LGPL-3.0-or-later",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.5.0",
+    "eslint": "^10.1.0",
+    "jiti": "^2.6.1",
+    "prettier": "^3.8.1",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.57.2"
+  }
+}

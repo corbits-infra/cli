@@ -1,0 +1,10 @@
+*~
+*\#*
+dist
+node_modules
+tsconfig.tsbuildinfo
+tmp
+.env
+.eslintcache
+.build-finished
+.DS_Store
