@@ -11,48 +11,7 @@ import {
   ValidationError,
   qs,
 } from "../src/api/client.js";
-
-const validProxy = {
-  id: 1,
-  name: "helius",
-  org_slug: null,
-  default_price_usdc: 10000,
-  default_scheme: "exact",
-  tags: [],
-  url: "https://helius.api.corbits.dev",
-};
-
-const validEndpoint = {
-  id: 1,
-  path_pattern: "/v1/*",
-  tags: [],
-};
-
-function mockFetch(
-  handler: (url: string) => { status: number; body: unknown },
-) {
-  const original = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = typeof input === "string" ? input : input.toString();
-    calls.push(url);
-    const { status, body } = handler(url);
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      statusText:
-        status === 200 ? "OK" : status === 404 ? "Not Found" : "Error",
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    };
-  }) as typeof fetch;
-  return {
-    calls,
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
+import { mockFetch, validProxy, validEndpoint } from "./helpers.js";
 
 await t.test("qs utility", async (t) => {
   await t.test("returns empty string for no params", async (t) => {
@@ -187,6 +146,25 @@ await t.test("listAllProxies", async (t) => {
     t.ok(mock.calls[2]?.includes("cursor=cursor2"));
     t.end();
   });
+
+  await t.test(
+    "stops when nextCursor is undefined (not just null)",
+    async (t) => {
+      const mock = mockFetch(() => ({
+        status: 200,
+        body: {
+          data: [validProxy],
+          pagination: { hasMore: true },
+        },
+      }));
+      t.teardown(mock.restore);
+
+      const result = await listAllProxies();
+      t.equal(result.length, 1);
+      t.equal(mock.calls.length, 1, "should not make a second request");
+      t.end();
+    },
+  );
 });
 
 await t.test("listAllProxyEndpoints", async (t) => {
@@ -273,19 +251,28 @@ await t.test("error handling", async (t) => {
     t.end();
   });
 
-  await t.test("throws ValidationError on malformed response", async (t) => {
-    const mock = mockFetch(() => ({
-      status: 200,
-      body: { data: { wrong: "shape" } },
-    }));
-    t.teardown(mock.restore);
+  await t.test(
+    "throws ValidationError with descriptive message on malformed response",
+    async (t) => {
+      const mock = mockFetch(() => ({
+        status: 200,
+        body: { data: { wrong: "shape" } },
+      }));
+      t.teardown(mock.restore);
 
-    try {
-      await getProxy(1);
-      t.fail("should have thrown");
-    } catch (err) {
-      t.ok(err instanceof ValidationError);
-    }
-    t.end();
-  });
+      try {
+        await getProxy(1);
+        t.fail("should have thrown");
+      } catch (err) {
+        t.ok(err instanceof ValidationError);
+        const msg = (err as ValidationError).message;
+        t.ok(msg.length > 0, "message should not be empty");
+        t.ok(
+          msg.includes("must be") || msg.includes("required"),
+          "message should describe validation failure",
+        );
+      }
+      t.end();
+    },
+  );
 });

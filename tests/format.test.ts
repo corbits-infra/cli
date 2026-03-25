@@ -8,21 +8,7 @@ import {
   printYaml,
   printTable,
 } from "../src/output/format.js";
-
-function captureStdout(fn: () => void): string {
-  const original = process.stdout.write;
-  let captured = "";
-  process.stdout.write = ((chunk: string) => {
-    captured += chunk;
-    return true;
-  }) as typeof process.stdout.write;
-  try {
-    fn();
-  } finally {
-    process.stdout.write = original;
-  }
-  return captured;
-}
+import { captureStdout } from "./helpers.js";
 
 await t.test("formatPrice", async (t) => {
   await t.test("formats micro-USDC to dollars", async (t) => {
@@ -38,7 +24,7 @@ await t.test("formatPrice", async (t) => {
 
 await t.test("printJson", async (t) => {
   await t.test("outputs formatted JSON", async (t) => {
-    const output = captureStdout(() => printJson({ a: 1, b: "two" }));
+    const output = await captureStdout(() => printJson({ a: 1, b: "two" }));
     const parsed = JSON.parse(output);
     t.equal(parsed.a, 1);
     t.equal(parsed.b, "two");
@@ -46,7 +32,7 @@ await t.test("printJson", async (t) => {
   });
 
   await t.test("outputs arrays", async (t) => {
-    const output = captureStdout(() => printJson([1, 2, 3]));
+    const output = await captureStdout(() => printJson([1, 2, 3]));
     t.same(JSON.parse(output), [1, 2, 3]);
     t.end();
   });
@@ -54,7 +40,9 @@ await t.test("printJson", async (t) => {
 
 await t.test("printYaml", async (t) => {
   await t.test("outputs YAML", async (t) => {
-    const output = captureStdout(() => printYaml({ name: "test", count: 5 }));
+    const output = await captureStdout(() =>
+      printYaml({ name: "test", count: 5 }),
+    );
     t.ok(output.includes("name: test"));
     t.ok(output.includes("count: 5"));
     t.end();
@@ -63,7 +51,7 @@ await t.test("printYaml", async (t) => {
 
 await t.test("printTable", async (t) => {
   await t.test("outputs a table with headers and rows", async (t) => {
-    const output = captureStdout(() =>
+    const output = await captureStdout(() =>
       printTable(
         ["Name", "Value"],
         [
@@ -80,7 +68,7 @@ await t.test("printTable", async (t) => {
   });
 
   await t.test("handles empty rows", async (t) => {
-    const output = captureStdout(() => printTable(["Name"], []));
+    const output = await captureStdout(() => printTable(["Name"], []));
     t.ok(output.includes("Name"));
     t.end();
   });
@@ -97,7 +85,7 @@ await t.test("printFormatted", async (t) => {
   ];
 
   await t.test("routes to JSON output", async (t) => {
-    const output = captureStdout(() =>
+    const output = await captureStdout(() =>
       printFormatted("json", items, ["ID", "Name"], toRow),
     );
     const parsed = JSON.parse(output);
@@ -107,7 +95,7 @@ await t.test("printFormatted", async (t) => {
   });
 
   await t.test("routes to YAML output", async (t) => {
-    const output = captureStdout(() =>
+    const output = await captureStdout(() =>
       printFormatted("yaml", items, ["ID", "Name"], toRow),
     );
     t.ok(output.includes("name: alpha"));
@@ -116,7 +104,7 @@ await t.test("printFormatted", async (t) => {
   });
 
   await t.test("routes to table output", async (t) => {
-    const output = captureStdout(() =>
+    const output = await captureStdout(() =>
       printFormatted("table", items, ["ID", "Name"], toRow),
     );
     t.ok(output.includes("ID"));

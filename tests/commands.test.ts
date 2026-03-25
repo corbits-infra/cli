@@ -1,95 +1,27 @@
 #!/usr/bin/env pnpm tsx
 
 import t from "tap";
+import {
+  mockFetch,
+  captureStdout,
+  validProxy,
+  validProxy2,
+  searchEndpoint,
+} from "./helpers.js";
 
-const validProxy = {
-  id: 1,
-  name: "helius",
-  org_slug: null,
-  default_price_usdc: 10000,
-  default_scheme: "exact",
-  tags: ["solana", "rpc"],
-  url: "https://helius.api.corbits.dev",
-};
-
-const validProxy2 = {
-  id: 2,
-  name: "jupiter",
-  org_slug: null,
-  default_price_usdc: 5000,
-  default_scheme: "exact",
-  tags: ["solana", "dex"],
-  url: "https://jupiter.api.corbits.dev",
-};
-
-const searchEndpoint = {
-  id: 10,
-  path_pattern: "/v1/tokens/*",
-  tags: ["tokens"],
-  proxy_id: 1,
-  proxy_name: "helius",
-};
-
-function mockFetch(
-  handler: (url: string) => { status: number; body: unknown },
-) {
-  const original = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = typeof input === "string" ? input : input.toString();
-    const { status, body } = handler(url);
-    return {
-      ok: status >= 200 && status < 300,
-      status,
-      statusText: status === 200 ? "OK" : "Error",
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    };
-  }) as typeof fetch;
-  return () => {
-    globalThis.fetch = original;
-  };
-}
-
-function captureStdout(fn: () => void | Promise<void>): Promise<string> {
-  const original = process.stdout.write;
-  let captured = "";
-  process.stdout.write = ((chunk: string) => {
-    captured += chunk;
-    return true;
-  }) as typeof process.stdout.write;
-  const result = fn();
-  if (result instanceof Promise) {
-    return result.then(
-      () => {
-        process.stdout.write = original;
-        return captured;
-      },
-      (err) => {
-        process.stdout.write = original;
-        throw err;
-      },
-    );
-  }
-  process.stdout.write = original;
-  return Promise.resolve(captured);
-}
-
-// We import the command handlers after defining mocks so we can
-// control fetch within each test. cmd-ts handlers are just async
-// functions once you extract them.
 const { discover } = await import("../src/commands/discover.js");
 const { inspect } = await import("../src/commands/inspect.js");
 
 await t.test("discover command", async (t) => {
-  await t.test("lists all proxies when no query", async (t) => {
-    const restore = mockFetch(() => ({
+  await t.test("lists all proxies in table with headers", async (t) => {
+    const mock = mockFetch(() => ({
       status: 200,
       body: {
         data: [validProxy, validProxy2],
         pagination: { nextCursor: null, hasMore: false },
       },
     }));
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -98,28 +30,24 @@ await t.test("discover command", async (t) => {
         format: undefined,
       }),
     );
+    t.ok(output.includes("ID"), "should have ID header");
+    t.ok(output.includes("Name"), "should have Name header");
+    t.ok(output.includes("Price"), "should have Price header");
     t.ok(output.includes("helius"));
     t.ok(output.includes("jupiter"));
+    t.ok(mock.calls[0]?.includes("/api/v1/proxies"));
     t.end();
   });
 
-  await t.test("searches when query provided", async (t) => {
-    const restore = mockFetch((url) => {
-      if (url.includes("/search")) {
-        return {
-          status: 200,
-          body: {
-            proxies: [validProxy],
-            endpoints: [searchEndpoint],
-          },
-        };
-      }
-      return {
-        status: 200,
-        body: { data: [], pagination: { hasMore: false } },
-      };
-    });
-    t.teardown(restore);
+  await t.test("searches and shows both proxies and endpoints", async (t) => {
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        proxies: [validProxy],
+        endpoints: [searchEndpoint],
+      },
+    }));
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -131,18 +59,19 @@ await t.test("discover command", async (t) => {
     t.ok(output.includes("helius"));
     t.ok(output.includes("Matching endpoints"));
     t.ok(output.includes("/v1/tokens/*"));
+    t.ok(mock.calls[0]?.includes("/api/v1/search?q=helius"));
     t.end();
   });
 
-  await t.test("filters by tag case-insensitively", async (t) => {
-    const restore = mockFetch(() => ({
+  await t.test("filters proxies by tag case-insensitively", async (t) => {
+    const mock = mockFetch(() => ({
       status: 200,
       body: {
         data: [validProxy, validProxy2],
         pagination: { nextCursor: null, hasMore: false },
       },
     }));
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -156,15 +85,51 @@ await t.test("discover command", async (t) => {
     t.end();
   });
 
+  await t.test("filters endpoints by tag when searching", async (t) => {
+    const endpointWithTag = {
+      ...searchEndpoint,
+      id: 20,
+      tags: ["dex"],
+      proxy_name: "jupiter",
+      proxy_id: 2,
+    };
+    const endpointNoTag = {
+      ...searchEndpoint,
+      id: 21,
+      tags: ["rpc"],
+      proxy_name: "helius",
+      proxy_id: 1,
+    };
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        proxies: [validProxy, validProxy2],
+        endpoints: [endpointWithTag, endpointNoTag],
+      },
+    }));
+    t.teardown(mock.restore);
+
+    const output = await captureStdout(() =>
+      discover.handler({
+        query: "test",
+        tag: "dex",
+        format: undefined,
+      }),
+    );
+    t.ok(output.includes("jupiter"), "jupiter proxy has dex tag");
+    t.notOk(output.includes("helius"), "helius proxy should be filtered out");
+    t.end();
+  });
+
   await t.test("shows no services found message", async (t) => {
-    const restore = mockFetch(() => ({
+    const mock = mockFetch(() => ({
       status: 200,
       body: {
         data: [],
         pagination: { nextCursor: null, hasMore: false },
       },
     }));
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -178,14 +143,14 @@ await t.test("discover command", async (t) => {
   });
 
   await t.test("outputs JSON when format is json", async (t) => {
-    const restore = mockFetch(() => ({
+    const mock = mockFetch(() => ({
       status: 200,
       body: {
         data: [validProxy],
         pagination: { nextCursor: null, hasMore: false },
       },
     }));
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -200,12 +165,34 @@ await t.test("discover command", async (t) => {
     t.end();
   });
 
+  await t.test("outputs YAML when format is yaml", async (t) => {
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        data: [validProxy],
+        pagination: { nextCursor: null, hasMore: false },
+      },
+    }));
+    t.teardown(mock.restore);
+
+    const output = await captureStdout(() =>
+      discover.handler({
+        query: undefined,
+        tag: undefined,
+        format: "yaml",
+      }),
+    );
+    t.ok(output.includes("name: helius"));
+    t.ok(output.includes("default_price_usdc: 10000"));
+    t.end();
+  });
+
   await t.test("search JSON includes endpoints", async (t) => {
-    const restore = mockFetch(() => ({
+    const mock = mockFetch(() => ({
       status: 200,
       body: { proxies: [validProxy], endpoints: [searchEndpoint] },
     }));
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
       discover.handler({
@@ -220,82 +207,101 @@ await t.test("discover command", async (t) => {
     t.equal(parsed.endpoints.length, 1);
     t.end();
   });
+
+  await t.test("search YAML includes endpoints", async (t) => {
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: { proxies: [validProxy], endpoints: [searchEndpoint] },
+    }));
+    t.teardown(mock.restore);
+
+    const output = await captureStdout(() =>
+      discover.handler({
+        query: "test",
+        tag: undefined,
+        format: "yaml",
+      }),
+    );
+    t.ok(output.includes("proxies:"));
+    t.ok(output.includes("endpoints:"));
+    t.ok(output.includes("proxy_name: helius"));
+    t.end();
+  });
 });
 
 await t.test("inspect command", async (t) => {
-  await t.test("shows proxy details and endpoints", async (t) => {
-    const restore = mockFetch((url) => {
+  function inspectMock(endpoints: unknown[] = []) {
+    return mockFetch((url) => {
       if (url.includes("/endpoints")) {
         return {
           status: 200,
           body: {
-            data: [
-              {
-                id: 10,
-                path_pattern: "/v1/tokens/*",
-                tags: [],
-                price_usdc: null,
-                scheme: null,
-              },
-            ],
+            data: endpoints,
             pagination: { nextCursor: null, hasMore: false },
           },
         };
       }
       return {
         status: 200,
-        body: { data: { ...validProxy, endpoint_count: 1 } },
+        body: {
+          data: { ...validProxy, endpoint_count: endpoints.length },
+        },
       };
     });
-    t.teardown(restore);
+  }
+
+  const sampleEndpoint = {
+    id: 10,
+    path_pattern: "/v1/tokens/*",
+    tags: [],
+    price_usdc: null,
+    scheme: null,
+  };
+
+  await t.test("shows proxy details and endpoints in table", async (t) => {
+    const mock = inspectMock([sampleEndpoint]);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
-      inspect.handler({
-        proxyId: 1,
-        openapi: false,
-        format: undefined,
-      }),
+      inspect.handler({ proxyId: 1, openapi: false, format: undefined }),
     );
     t.ok(output.includes("helius (ID: 1)"));
     t.ok(output.includes("$0.010000"));
     t.ok(output.includes("Endpoints: 1"));
     t.ok(output.includes("/v1/tokens/*"));
+    t.ok(output.includes("(default)"), "null price should show (default)");
     t.end();
   });
 
   await t.test("outputs JSON for inspect", async (t) => {
-    const restore = mockFetch((url) => {
-      if (url.includes("/endpoints")) {
-        return {
-          status: 200,
-          body: {
-            data: [],
-            pagination: { nextCursor: null, hasMore: false },
-          },
-        };
-      }
-      return {
-        status: 200,
-        body: { data: { ...validProxy, endpoint_count: 0 } },
-      };
-    });
-    t.teardown(restore);
+    const mock = inspectMock([sampleEndpoint]);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
-      inspect.handler({
-        proxyId: 1,
-        openapi: false,
-        format: "json",
-      }),
+      inspect.handler({ proxyId: 1, openapi: false, format: "json" }),
     );
     const parsed = JSON.parse(output);
     t.equal(parsed.proxy.name, "helius");
     t.ok(Array.isArray(parsed.endpoints));
+    t.equal(parsed.endpoints.length, 1);
+    t.equal(parsed.endpoints[0].path_pattern, "/v1/tokens/*");
     t.end();
   });
 
-  await t.test("openapi flag dumps spec as yaml", async (t) => {
-    const restore = mockFetch((url) => {
+  await t.test("outputs YAML for inspect", async (t) => {
+    const mock = inspectMock([sampleEndpoint]);
+    t.teardown(mock.restore);
+
+    const output = await captureStdout(() =>
+      inspect.handler({ proxyId: 1, openapi: false, format: "yaml" }),
+    );
+    t.ok(output.includes("name: helius"));
+    t.ok(output.includes("path_pattern: /v1/tokens/*"));
+    t.end();
+  });
+
+  await t.test("openapi flag dumps spec as yaml by default", async (t) => {
+    const mock = mockFetch((url) => {
       if (url.includes("/openapi")) {
         return {
           status: 200,
@@ -322,14 +328,10 @@ await t.test("inspect command", async (t) => {
         body: { data: { ...validProxy, endpoint_count: 0 } },
       };
     });
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
-      inspect.handler({
-        proxyId: 1,
-        openapi: true,
-        format: undefined,
-      }),
+      inspect.handler({ proxyId: 1, openapi: true, format: undefined }),
     );
     t.ok(output.includes("openapi:"));
     t.ok(output.includes("/v1/test"));
@@ -337,16 +339,12 @@ await t.test("inspect command", async (t) => {
   });
 
   await t.test("openapi flag with json format", async (t) => {
-    const restore = mockFetch((url) => {
+    const mock = mockFetch((url) => {
       if (url.includes("/openapi")) {
         return {
           status: 200,
           body: {
-            data: {
-              id: 1,
-              name: "helius",
-              spec: { openapi: "3.0.0" },
-            },
+            data: { id: 1, name: "helius", spec: { openapi: "3.0.0" } },
           },
         };
       }
@@ -364,14 +362,10 @@ await t.test("inspect command", async (t) => {
         body: { data: { ...validProxy, endpoint_count: 0 } },
       };
     });
-    t.teardown(restore);
+    t.teardown(mock.restore);
 
     const output = await captureStdout(() =>
-      inspect.handler({
-        proxyId: 1,
-        openapi: true,
-        format: "json",
-      }),
+      inspect.handler({ proxyId: 1, openapi: true, format: "json" }),
     );
     const parsed = JSON.parse(output);
     t.equal(parsed.openapi, "3.0.0");
