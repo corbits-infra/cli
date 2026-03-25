@@ -110,4 +110,4 @@ export async function listAllProxyEndpoints(
   return all;
 }
 
-export { ApiError, ValidationError };
+export { ApiError, ValidationError, qs };

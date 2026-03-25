@@ -11,238 +11,303 @@ import {
   Pagination,
   SearchResponse,
   ProxiesResponse,
+  ProxyDetailResponse,
+  EndpointsResponse,
+  EndpointDetailResponse,
+  ProxyOpenapiResponse,
 } from "../src/api/schemas.js";
 
+const validProxy = {
+  id: 1,
+  name: "helius",
+  org_slug: null,
+  default_price_usdc: 10000,
+  default_scheme: "exact",
+  tags: ["solana"],
+  url: "https://helius.api.corbits.dev",
+};
+
+const validEndpoint = {
+  id: 1,
+  path_pattern: "/v1/tokens/*",
+  description: "Token info",
+  price_usdc: 5000,
+  scheme: "exact",
+  tags: ["tokens"],
+};
+
 await t.test("Proxy schema", async (t) => {
-  await t.test("accepts valid proxy", async (t) => {
-    const data = {
-      id: 1,
-      name: "helius",
-      org_slug: null,
-      default_price_usdc: 10000,
-      default_scheme: "exact",
-      tags: ["solana"],
-      url: "https://helius.api.corbits.dev",
-    };
-    const result = Proxy(data);
+  await t.test("accepts valid proxy and preserves values", async (t) => {
+    const result = Proxy(validProxy);
     t.notOk(result instanceof type.errors, "should validate");
-    t.equal((result as typeof Proxy.infer).name, "helius");
+    const p = result as typeof Proxy.infer;
+    t.equal(p.id, 1);
+    t.equal(p.name, "helius");
+    t.equal(p.default_price_usdc, 10000);
+    t.equal(p.default_scheme, "exact");
+    t.same(p.tags, ["solana"]);
+    t.equal(p.url, "https://helius.api.corbits.dev");
     t.end();
   });
 
   await t.test("accepts proxy without org_slug", async (t) => {
-    const data = {
-      id: 1,
-      name: "helius",
-      default_price_usdc: 10000,
-      default_scheme: "exact",
-      tags: [],
-      url: "https://helius.api.corbits.dev",
-    };
-    const result = Proxy(data);
+    const { org_slug: _, ...noSlug } = validProxy;
+    const result = Proxy(noSlug);
     t.notOk(result instanceof type.errors, "should validate without org_slug");
     t.end();
   });
 
   await t.test("rejects proxy missing required fields", async (t) => {
-    const data = { id: 1, name: "helius" };
-    const result = Proxy(data);
-    t.ok(result instanceof type.errors, "should reject incomplete data");
+    t.ok(
+      Proxy({ id: 1, name: "x" }) instanceof type.errors,
+      "missing many fields",
+    );
+    t.ok(
+      Proxy({ ...validProxy, tags: undefined }) instanceof type.errors,
+      "missing tags",
+    );
     t.end();
   });
 
   await t.test("rejects proxy with wrong types", async (t) => {
-    const data = {
-      id: "not-a-number",
-      name: 123,
-      default_price_usdc: "free",
-      default_scheme: "exact",
-      tags: "not-an-array",
-      url: "https://example.com",
-    };
-    const result = Proxy(data);
-    t.ok(result instanceof type.errors, "should reject wrong types");
+    t.ok(Proxy({ ...validProxy, id: "not-a-number" }) instanceof type.errors);
+    t.ok(Proxy({ ...validProxy, tags: "not-an-array" }) instanceof type.errors);
+    t.ok(
+      Proxy({ ...validProxy, default_price_usdc: "free" }) instanceof
+        type.errors,
+    );
     t.end();
   });
 });
 
 await t.test("ProxyDetail schema", async (t) => {
-  await t.test("accepts valid proxy detail", async (t) => {
-    const data = {
-      id: 1,
-      name: "helius",
-      org_slug: null,
-      default_price_usdc: 10000,
-      default_scheme: "exact",
-      tags: [],
-      url: "https://helius.api.corbits.dev",
-      endpoint_count: 5,
-    };
-    const result = ProxyDetail(data);
+  await t.test("accepts valid proxy detail with endpoint_count", async (t) => {
+    const result = ProxyDetail({ ...validProxy, endpoint_count: 5 });
     t.notOk(result instanceof type.errors, "should validate");
     t.equal((result as typeof ProxyDetail.infer).endpoint_count, 5);
+    t.equal((result as typeof ProxyDetail.infer).name, "helius");
     t.end();
   });
 
   await t.test("rejects proxy detail missing endpoint_count", async (t) => {
-    const data = {
-      id: 1,
-      name: "helius",
-      default_price_usdc: 10000,
-      default_scheme: "exact",
-      tags: [],
-      url: "https://helius.api.corbits.dev",
-    };
-    const result = ProxyDetail(data);
-    t.ok(result instanceof type.errors, "should reject without endpoint_count");
+    t.ok(ProxyDetail(validProxy) instanceof type.errors);
     t.end();
   });
 });
 
 await t.test("Endpoint schema", async (t) => {
-  await t.test("accepts valid endpoint", async (t) => {
-    const data = {
-      id: 1,
-      path_pattern: "/v1/tokens/*",
-      description: "Token info",
-      price_usdc: 5000,
-      scheme: "exact",
-      tags: ["tokens"],
-    };
-    const result = Endpoint(data);
-    t.notOk(result instanceof type.errors, "should validate");
+  await t.test("accepts valid endpoint and preserves values", async (t) => {
+    const result = Endpoint(validEndpoint);
+    t.notOk(result instanceof type.errors);
+    const e = result as typeof Endpoint.infer;
+    t.equal(e.id, 1);
+    t.equal(e.path_pattern, "/v1/tokens/*");
+    t.equal(e.description, "Token info");
+    t.equal(e.price_usdc, 5000);
+    t.same(e.tags, ["tokens"]);
     t.end();
   });
 
   await t.test("accepts endpoint with null optional fields", async (t) => {
-    const data = {
+    const result = Endpoint({
       id: 1,
-      path_pattern: "/v1/tokens/*",
+      path_pattern: "/v1/*",
       description: null,
       price_usdc: null,
       scheme: null,
       tags: [],
-    };
-    const result = Endpoint(data);
-    t.notOk(result instanceof type.errors, "should validate with nulls");
+    });
+    t.notOk(result instanceof type.errors);
     t.end();
   });
 
   await t.test("accepts endpoint without optional fields", async (t) => {
-    const data = {
-      id: 1,
-      path_pattern: "/v1/tokens/*",
-      tags: [],
-    };
-    const result = Endpoint(data);
-    t.notOk(result instanceof type.errors, "should validate without optionals");
+    const result = Endpoint({ id: 1, path_pattern: "/v1/*", tags: [] });
+    t.notOk(result instanceof type.errors);
     t.end();
   });
 });
 
 await t.test("EndpointDetail schema", async (t) => {
-  await t.test("accepts valid endpoint detail", async (t) => {
-    const data = {
-      id: 1,
-      path_pattern: "/v1/tokens/*",
-      tags: [],
+  await t.test("accepts and preserves detail fields", async (t) => {
+    const result = EndpointDetail({
+      ...validEndpoint,
       priority: 10,
       created_at: "2025-01-01T00:00:00Z",
-    };
-    const result = EndpointDetail(data);
-    t.notOk(result instanceof type.errors, "should validate");
-    t.equal((result as typeof EndpointDetail.infer).priority, 10);
+    });
+    t.notOk(result instanceof type.errors);
+    const e = result as typeof EndpointDetail.infer;
+    t.equal(e.priority, 10);
+    t.equal(e.created_at, "2025-01-01T00:00:00Z");
+    t.equal(e.path_pattern, "/v1/tokens/*");
+    t.end();
+  });
+
+  await t.test("rejects without detail fields", async (t) => {
+    t.ok(EndpointDetail(validEndpoint) instanceof type.errors);
     t.end();
   });
 });
 
 await t.test("SearchEndpoint schema", async (t) => {
-  await t.test("accepts valid search endpoint", async (t) => {
-    const data = {
-      id: 1,
-      path_pattern: "/v1/tokens/*",
-      tags: [],
+  await t.test("accepts and preserves search fields", async (t) => {
+    const result = SearchEndpoint({
+      ...validEndpoint,
       proxy_id: 1,
       proxy_name: "helius",
       org_slug: null,
-    };
-    const result = SearchEndpoint(data);
-    t.notOk(result instanceof type.errors, "should validate");
-    t.equal((result as typeof SearchEndpoint.infer).proxy_name, "helius");
+    });
+    t.notOk(result instanceof type.errors);
+    const e = result as typeof SearchEndpoint.infer;
+    t.equal(e.proxy_id, 1);
+    t.equal(e.proxy_name, "helius");
+    t.equal(e.path_pattern, "/v1/tokens/*");
+    t.end();
+  });
+
+  await t.test("rejects without proxy_id", async (t) => {
+    t.ok(
+      SearchEndpoint({ ...validEndpoint, proxy_name: "x" }) instanceof
+        type.errors,
+    );
     t.end();
   });
 });
 
 await t.test("Pagination schema", async (t) => {
-  await t.test("accepts pagination with cursor", async (t) => {
-    const data = { nextCursor: "abc123", hasMore: true };
-    const result = Pagination(data);
-    t.notOk(result instanceof type.errors, "should validate");
+  await t.test("accepts and preserves cursor", async (t) => {
+    const result = Pagination({ nextCursor: "abc123", hasMore: true });
+    t.notOk(result instanceof type.errors);
+    const p = result as typeof Pagination.infer;
+    t.equal(p.nextCursor, "abc123");
+    t.equal(p.hasMore, true);
     t.end();
   });
 
-  await t.test("accepts pagination with null cursor", async (t) => {
-    const data = { nextCursor: null, hasMore: false };
-    const result = Pagination(data);
-    t.notOk(result instanceof type.errors, "should validate");
+  await t.test("accepts null cursor", async (t) => {
+    const result = Pagination({ nextCursor: null, hasMore: false });
+    t.notOk(result instanceof type.errors);
+    t.equal((result as typeof Pagination.infer).hasMore, false);
+    t.end();
+  });
+
+  await t.test("rejects missing hasMore", async (t) => {
+    t.ok(Pagination({ nextCursor: "abc" }) instanceof type.errors);
     t.end();
   });
 });
 
 await t.test("SearchResponse schema", async (t) => {
-  await t.test("accepts valid search response", async (t) => {
-    const data = {
-      proxies: [
-        {
-          id: 1,
-          name: "helius",
-          org_slug: null,
-          default_price_usdc: 10000,
-          default_scheme: "exact",
-          tags: [],
-          url: "https://helius.api.corbits.dev",
-        },
-      ],
-      endpoints: [
-        {
-          id: 1,
-          path_pattern: "/v1/*",
-          tags: [],
-          proxy_id: 1,
-          proxy_name: "helius",
-        },
-      ],
-    };
-    const result = SearchResponse(data);
-    t.notOk(result instanceof type.errors, "should validate");
+  await t.test("accepts valid response with data", async (t) => {
+    const result = SearchResponse({
+      proxies: [validProxy],
+      endpoints: [{ ...validEndpoint, proxy_id: 1, proxy_name: "helius" }],
+    });
+    t.notOk(result instanceof type.errors);
+    const r = result as typeof SearchResponse.infer;
+    t.equal(r.proxies.length, 1);
+    t.equal(r.endpoints.length, 1);
+    t.equal(r.proxies[0]?.name, "helius");
     t.end();
   });
 
-  await t.test("accepts empty search response", async (t) => {
-    const data = { proxies: [], endpoints: [] };
-    const result = SearchResponse(data);
-    t.notOk(result instanceof type.errors, "should validate empty results");
+  await t.test("accepts empty arrays", async (t) => {
+    const result = SearchResponse({ proxies: [], endpoints: [] });
+    t.notOk(result instanceof type.errors);
+    t.end();
+  });
+
+  await t.test("rejects invalid nested proxy", async (t) => {
+    const result = SearchResponse({
+      proxies: [{ id: "bad" }],
+      endpoints: [],
+    });
+    t.ok(result instanceof type.errors);
     t.end();
   });
 });
 
 await t.test("ProxiesResponse schema", async (t) => {
-  await t.test("accepts valid proxies response", async (t) => {
-    const data = {
-      data: [
-        {
-          id: 1,
-          name: "helius",
-          default_price_usdc: 10000,
-          default_scheme: "exact",
-          tags: [],
-          url: "https://helius.api.corbits.dev",
-        },
-      ],
+  await t.test("accepts valid paginated response", async (t) => {
+    const result = ProxiesResponse({
+      data: [validProxy],
+      pagination: { nextCursor: "abc", hasMore: true },
+    });
+    t.notOk(result instanceof type.errors);
+    const r = result as typeof ProxiesResponse.infer;
+    t.equal(r.data.length, 1);
+    t.equal(r.pagination.hasMore, true);
+    t.equal(r.pagination.nextCursor, "abc");
+    t.end();
+  });
+});
+
+await t.test("ProxyDetailResponse schema", async (t) => {
+  await t.test("accepts valid response", async (t) => {
+    const result = ProxyDetailResponse({
+      data: { ...validProxy, endpoint_count: 3 },
+    });
+    t.notOk(result instanceof type.errors);
+    t.equal(
+      (result as typeof ProxyDetailResponse.infer).data.endpoint_count,
+      3,
+    );
+    t.end();
+  });
+
+  await t.test("rejects when missing endpoint_count", async (t) => {
+    t.ok(ProxyDetailResponse({ data: validProxy }) instanceof type.errors);
+    t.end();
+  });
+});
+
+await t.test("EndpointsResponse schema", async (t) => {
+  await t.test("accepts valid paginated response", async (t) => {
+    const result = EndpointsResponse({
+      data: [validEndpoint],
       pagination: { nextCursor: null, hasMore: false },
-    };
-    const result = ProxiesResponse(data);
-    t.notOk(result instanceof type.errors, "should validate");
+    });
+    t.notOk(result instanceof type.errors);
+    const r = result as typeof EndpointsResponse.infer;
+    t.equal(r.data.length, 1);
+    t.equal(r.data[0]?.path_pattern, "/v1/tokens/*");
+    t.end();
+  });
+});
+
+await t.test("EndpointDetailResponse schema", async (t) => {
+  await t.test("accepts valid response", async (t) => {
+    const result = EndpointDetailResponse({
+      data: {
+        ...validEndpoint,
+        priority: 5,
+        created_at: "2025-06-01T00:00:00Z",
+      },
+    });
+    t.notOk(result instanceof type.errors);
+    t.equal((result as typeof EndpointDetailResponse.infer).data.priority, 5);
+    t.end();
+  });
+});
+
+await t.test("ProxyOpenapiResponse schema", async (t) => {
+  await t.test("accepts valid response with object spec", async (t) => {
+    const result = ProxyOpenapiResponse({
+      data: {
+        id: 1,
+        name: "helius",
+        spec: { openapi: "3.0.0", paths: {} },
+      },
+    });
+    t.notOk(result instanceof type.errors);
+    t.end();
+  });
+
+  await t.test("rejects non-object spec", async (t) => {
+    const result = ProxyOpenapiResponse({
+      data: { id: 1, name: "helius", spec: "not an object" },
+    });
+    t.ok(result instanceof type.errors, "strings should not be valid specs");
     t.end();
   });
 });

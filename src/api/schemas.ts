@@ -77,7 +77,7 @@ export const ProxyOpenapiResponse = type({
   data: {
     id: "number",
     name: "string",
-    spec: "Record<string, unknown>",
+    spec: "object",
   },
 });
 export type ProxyOpenapiResponse = typeof ProxyOpenapiResponse.infer;
