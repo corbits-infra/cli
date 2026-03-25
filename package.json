@@ -1,7 +1,7 @@
 {
-  "name": "@corbitsdev/cli",
+  "name": "@corbits/cli",
   "version": "0.0.1",
-  "description": "",
+  "description": "CLI tool for browsing, filtering, and testing x402-gated services",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -18,13 +18,32 @@
   "publishConfig": {
     "access": "public"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "tap": {
+    "plugin": [
+      "!@tapjs/typescript",
+      "@tapjs/tsx"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tapjs/tsx": "^3.4.2",
     "@types/node": "^25.5.0",
     "eslint": "^10.1.0",
     "jiti": "^2.6.1",
     "prettier": "^3.8.1",
+    "tap": "^21.6.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.57.2"
+  },
+  "dependencies": {
+    "arktype": "^2.2.0",
+    "cli-table3": "^0.6.5",
+    "cmd-ts": "^0.15.0",
+    "yaml": "^2.8.3"
   }
 }
