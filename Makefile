@@ -9,6 +9,7 @@ pre-build: FORCE
 build: pre-build FORCE
 	rm -rf dist tsconfig.tsbuildinfo
 	pnpm tsc
+	pnpm tsc -p tests/tsconfig.json --noEmit
 	touch .build-finished
 
 lint:
