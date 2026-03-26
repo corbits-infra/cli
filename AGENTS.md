@@ -4,15 +4,14 @@ Instructions for AI agents working in this repository.
 
 ## Project
 
-CLI tool (`@corbitsdev/cli`) for browsing, filtering, and testing x402-gated services via the Bazaar discovery endpoint.
+CLI tool (`@corbits/cli`) for browsing and filtering x402-gated services via the Corbits discovery API at `https://api.corbits.dev`.
 
 Commands:
 
-- `discover` - query search endpoint, browse/filter services (provider, category, tag, price range)
-- Service details: pricing, endpoints, supported tokens, description
-- Test a service: make a paid request from CLI with wallet config
+- `discover` - search/list proxies and endpoints, filter by tag
+- `inspect` - show proxy details, endpoints, and upstream OpenAPI specs
 
-Output formats: table (default), JSON, YAML. Wallet configuration via env vars or config file.
+Output formats: table (default), JSON, YAML.
 
 ## Git
 

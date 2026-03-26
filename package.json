@@ -1,7 +1,7 @@
 {
   "name": "@corbits/cli",
   "version": "0.0.1",
-  "description": "CLI tool for browsing, filtering, and testing x402-gated services",
+  "description": "CLI tool for browsing and filtering x402-gated services",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
