@@ -4,7 +4,7 @@ export const Proxy = type({
   id: "number",
   name: "string",
   "org_slug?": "string | null",
-  default_price_usdc: "number",
+  default_price: "number",
   default_scheme: "string",
   tags: "string[]",
   url: "string",
@@ -20,7 +20,7 @@ export const Endpoint = type({
   id: "number",
   path_pattern: "string",
   "description?": "string | null",
-  "price_usdc?": "number | null",
+  "price?": "number | null",
   "scheme?": "string | null",
   tags: "string[]",
 });

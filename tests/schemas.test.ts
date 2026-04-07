@@ -21,7 +21,7 @@ const validProxy = {
   id: 1,
   name: "helius",
   org_slug: null,
-  default_price_usdc: 10000,
+  default_price: 10000,
   default_scheme: "exact",
   tags: ["solana"],
   url: "https://helius.api.corbits.dev",
@@ -31,7 +31,7 @@ const validEndpoint = {
   id: 1,
   path_pattern: "/v1/tokens/*",
   description: "Token info",
-  price_usdc: 5000,
+  price: 5000,
   scheme: "exact",
   tags: ["tokens"],
 };
@@ -43,7 +43,7 @@ await t.test("Proxy schema", async (t) => {
     const p = result as typeof Proxy.infer;
     t.equal(p.id, 1);
     t.equal(p.name, "helius");
-    t.equal(p.default_price_usdc, 10000);
+    t.equal(p.default_price, 10000);
     t.equal(p.default_scheme, "exact");
     t.same(p.tags, ["solana"]);
     t.equal(p.url, "https://helius.api.corbits.dev");
@@ -73,8 +73,7 @@ await t.test("Proxy schema", async (t) => {
     t.ok(Proxy({ ...validProxy, id: "not-a-number" }) instanceof type.errors);
     t.ok(Proxy({ ...validProxy, tags: "not-an-array" }) instanceof type.errors);
     t.ok(
-      Proxy({ ...validProxy, default_price_usdc: "free" }) instanceof
-        type.errors,
+      Proxy({ ...validProxy, default_price: "free" }) instanceof type.errors,
     );
     t.end();
   });
@@ -103,7 +102,7 @@ await t.test("Endpoint schema", async (t) => {
     t.equal(e.id, 1);
     t.equal(e.path_pattern, "/v1/tokens/*");
     t.equal(e.description, "Token info");
-    t.equal(e.price_usdc, 5000);
+    t.equal(e.price, 5000);
     t.same(e.tags, ["tokens"]);
     t.end();
   });
@@ -113,7 +112,7 @@ await t.test("Endpoint schema", async (t) => {
       id: 1,
       path_pattern: "/v1/*",
       description: null,
-      price_usdc: null,
+      price: null,
       scheme: null,
       tags: [],
     });
