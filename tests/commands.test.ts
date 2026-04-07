@@ -183,7 +183,7 @@ await t.test("discover command", async (t) => {
       }),
     );
     t.ok(output.includes("name: helius"));
-    t.ok(output.includes("default_price_usdc: 10000"));
+    t.ok(output.includes("default_price: 10000"));
     t.end();
   });
 
@@ -254,7 +254,7 @@ await t.test("inspect command", async (t) => {
     id: 10,
     path_pattern: "/v1/tokens/*",
     tags: [],
-    price_usdc: null,
+    price: null,
     scheme: null,
   };
 

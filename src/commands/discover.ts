@@ -62,7 +62,7 @@ export const discover = command({
         (p) => [
           String(p.id),
           p.name,
-          formatPrice(p.default_price_usdc),
+          formatPrice(p.default_price),
           p.tags.join(", "),
           p.url,
         ],
@@ -80,7 +80,7 @@ export const discover = command({
           e.proxy_name,
           String(e.proxy_id),
           e.path_pattern,
-          e.price_usdc != null ? formatPrice(e.price_usdc) : "(default)",
+          e.price != null ? formatPrice(e.price) : "(default)",
           e.tags.join(", "),
         ],
       );

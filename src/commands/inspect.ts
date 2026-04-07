@@ -52,7 +52,7 @@ export const inspect = command({
     const p = proxy.data;
     stdout(`${p.name} (ID: ${p.id})`);
     stdout(`  URL:       ${p.url}`);
-    stdout(`  Price:     ${formatPrice(p.default_price_usdc)}`);
+    stdout(`  Price:     ${formatPrice(p.default_price)}`);
     stdout(`  Scheme:    ${p.default_scheme}`);
     stdout(`  Tags:      ${p.tags.join(", ")}`);
     stdout(`  Endpoints: ${p.endpoint_count}`);
@@ -66,7 +66,7 @@ export const inspect = command({
         (e) => [
           String(e.id),
           e.path_pattern,
-          e.price_usdc != null ? formatPrice(e.price_usdc) : "(default)",
+          e.price != null ? formatPrice(e.price) : "(default)",
           e.scheme ?? "(default)",
           e.tags.join(", "),
         ],
