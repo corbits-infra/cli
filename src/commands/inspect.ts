@@ -10,7 +10,7 @@ import {
   printJson,
   printYaml,
 } from "../output/format.js";
-import { formatFlag } from "../flags.js";
+import { formatFlag, resolveOutputFormat } from "../flags.js";
 
 const stdout = (s: string) => process.stdout.write(s + "\n");
 
@@ -26,11 +26,8 @@ export const inspect = command({
     format: formatFlag,
   },
   handler: async ({ proxyId, openapi, format }) => {
-    const fmt = format ?? "table";
-    const proxy = await getProxy(proxyId);
-    const endpoints = await listAllProxyEndpoints(proxyId);
-
     if (openapi) {
+      const fmt = await resolveOutputFormat(format);
       const spec = await getProxyOpenapi(proxyId);
       if (fmt === "json") {
         printJson(spec.data.spec);
@@ -39,6 +36,10 @@ export const inspect = command({
       }
       return;
     }
+
+    const fmt = await resolveOutputFormat(format);
+    const proxy = await getProxy(proxyId);
+    const endpoints = await listAllProxyEndpoints(proxyId);
 
     if (fmt === "json") {
       printJson({ proxy: proxy.data, endpoints });

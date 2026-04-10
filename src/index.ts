@@ -2,6 +2,7 @@
 
 import { createRequire } from "node:module";
 import { subcommands, run } from "cmd-ts";
+import { config } from "./commands/config.js";
 import { discover } from "./commands/discover.js";
 import { inspect } from "./commands/inspect.js";
 import { ApiError, ValidationError } from "./api/client.js";
@@ -13,7 +14,7 @@ const app = subcommands({
   name: "corbits",
   version: pkg.version,
   description: "Browse, filter, and test x402-gated services",
-  cmds: { discover, inspect },
+  cmds: { discover, inspect, config },
 });
 
 run(app, process.argv.slice(2)).catch((err: unknown) => {

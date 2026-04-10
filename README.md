@@ -31,6 +31,7 @@ corbits discover              # list all proxies
 corbits discover openai       # search for proxies matching "openai"
 corbits discover --tag dex    # filter by tag (substring, case-insensitive)
 corbits discover --format json
+NO_DNA=1 corbits discover     # default to JSON for agent callers
 ```
 
 When searching, both matching proxies and endpoints are shown.
@@ -43,6 +44,7 @@ Show details for a specific proxy, including its endpoints and pricing. Use the 
 corbits inspect 61            # show proxy details and endpoint table
 corbits inspect 61 --openapi  # dump the upstream OpenAPI spec
 corbits inspect 61 --format json
+NO_DNA=1 corbits inspect 61   # default to JSON for agent callers
 ```
 
 The `--openapi` flag outputs the upstream spec as YAML by default, or as JSON with `--format json`.
@@ -50,6 +52,7 @@ The `--openapi` flag outputs the upstream spec as YAML by default, or as JSON wi
 ### Output formats
 
 All commands support `--format` (`-f`) with values `table` (default), `json`, or `yaml`.
+If `NO_DNA` is set to a non-empty value and `--format` is omitted, the CLI defaults to `json`. Explicit `--format` flags still take precedence.
 
 ### Other flags
 

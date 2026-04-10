@@ -1,5 +1,8 @@
 #!/usr/bin/env pnpm tsx
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import t from "tap";
 import {
   mockFetch,
@@ -11,6 +14,30 @@ import {
 
 const { discover } = await import("../src/commands/discover.js");
 const { inspect } = await import("../src/commands/inspect.js");
+
+function parseJson(value: string): unknown {
+  return JSON.parse(value) as unknown;
+}
+
+function withTempConfigHome(test: {
+  teardown(fn: () => Promise<void> | void): void;
+}): string {
+  const dir = path.join(
+    os.tmpdir(),
+    `corbits-commands-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+  );
+  process.env.XDG_CONFIG_HOME = dir;
+  test.teardown(async () => {
+    delete process.env.XDG_CONFIG_HOME;
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  return dir;
+}
+
+async function writeConfig(configHome: string, body: string): Promise<void> {
+  await fs.mkdir(path.join(configHome, "corbits"), { recursive: true });
+  await fs.writeFile(path.join(configHome, "corbits", "config.toml"), body);
+}
 
 await t.test("discover command", async (t) => {
   await t.test("lists all proxies in table with headers", async (t) => {
@@ -159,9 +186,9 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { name: string }[];
     t.ok(Array.isArray(parsed));
-    t.equal(parsed[0].name, "helius");
+    t.equal(parsed.at(0)?.name, "helius");
     t.end();
   });
 
@@ -201,10 +228,111 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as {
+      proxies: unknown[];
+      endpoints: unknown[];
+    };
     t.ok(parsed.proxies);
     t.ok(parsed.endpoints);
     t.equal(parsed.endpoints.length, 1);
+    t.end();
+  });
+
+  await t.test("defaults to JSON when NO_DNA is set", async (t) => {
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        data: [validProxy],
+        pagination: { nextCursor: null, hasMore: false },
+      },
+    }));
+    t.teardown(mock.restore);
+
+    process.env.NO_DNA = "1";
+    t.teardown(() => {
+      delete process.env.NO_DNA;
+    });
+
+    const output = await captureStdout(() =>
+      discover.handler({ query: undefined, tag: undefined, format: undefined }),
+    );
+    const parsed = parseJson(output) as { name: string }[];
+    t.ok(Array.isArray(parsed));
+    t.equal(parsed.at(0)?.name, "helius");
+    t.end();
+  });
+
+  await t.test(
+    "uses configured default format when flag is omitted",
+    async (t) => {
+      const configHome = withTempConfigHome(t);
+      await writeConfig(
+        configHome,
+        `version = 1
+active_network = "solana-mainnet"
+
+[preferences]
+format = "yaml"
+api_url = "https://api.corbits.dev"
+
+[networks.solana-mainnet]
+address = "7xKX..."
+keyfile = "~/.config/corbits/keys/solana.key"
+`,
+      );
+      const mock = mockFetch(() => ({
+        status: 200,
+        body: {
+          data: [validProxy],
+          pagination: { nextCursor: null, hasMore: false },
+        },
+      }));
+      t.teardown(mock.restore);
+
+      const output = await captureStdout(() =>
+        discover.handler({
+          query: undefined,
+          tag: undefined,
+          format: undefined,
+        }),
+      );
+      t.match(output, /name: helius/);
+      t.end();
+    },
+  );
+
+  await t.test("uses configured api url for requests", async (t) => {
+    const configHome = withTempConfigHome(t);
+    await writeConfig(
+      configHome,
+      `version = 1
+active_network = "solana-mainnet"
+
+[preferences]
+format = "table"
+api_url = "https://staging.corbits.dev"
+
+[networks.solana-mainnet]
+address = "7xKX..."
+keyfile = "~/.config/corbits/keys/solana.key"
+`,
+    );
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        data: [validProxy],
+        pagination: { nextCursor: null, hasMore: false },
+      },
+    }));
+    t.teardown(mock.restore);
+
+    await captureStdout(() =>
+      discover.handler({ query: undefined, tag: undefined, format: undefined }),
+    );
+    t.match(
+      mock.calls.at(0),
+      /^https:\/\/staging\.corbits\.dev\/api\/v1\/proxies/,
+    );
     t.end();
   });
 
@@ -280,11 +408,14 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: false, format: "json" }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as {
+      proxy: { name: string };
+      endpoints: { path_pattern: string }[];
+    };
     t.equal(parsed.proxy.name, "helius");
     t.ok(Array.isArray(parsed.endpoints));
     t.equal(parsed.endpoints.length, 1);
-    t.equal(parsed.endpoints[0].path_pattern, "/v1/tokens/*");
+    t.equal(parsed.endpoints.at(0)?.path_pattern, "/v1/tokens/*");
     t.end();
   });
 
@@ -297,6 +428,27 @@ await t.test("inspect command", async (t) => {
     );
     t.ok(output.includes("name: helius"));
     t.ok(output.includes("path_pattern: /v1/tokens/*"));
+    t.end();
+  });
+
+  await t.test("defaults to JSON when NO_DNA is set", async (t) => {
+    const mock = inspectMock([sampleEndpoint]);
+    t.teardown(mock.restore);
+
+    process.env.NO_DNA = "1";
+    t.teardown(() => {
+      delete process.env.NO_DNA;
+    });
+
+    const output = await captureStdout(() =>
+      inspect.handler({ proxyId: 1, openapi: false, format: undefined }),
+    );
+    const parsed = parseJson(output) as {
+      proxy: { name: string };
+      endpoints: { path_pattern: string }[];
+    };
+    t.equal(parsed.proxy.name, "helius");
+    t.equal(parsed.endpoints.at(0)?.path_pattern, "/v1/tokens/*");
     t.end();
   });
 
@@ -338,6 +490,37 @@ await t.test("inspect command", async (t) => {
     t.end();
   });
 
+  await t.test(
+    "openapi flag does not fetch proxy metadata or endpoints",
+    async (t) => {
+      const mock = mockFetch((url) => {
+        if (url.includes("/openapi")) {
+          return {
+            status: 200,
+            body: {
+              data: { id: 1, name: "helius", spec: { openapi: "3.0.0" } },
+            },
+          };
+        }
+
+        return {
+          status: 500,
+          body: { error: "unexpected request" },
+        };
+      });
+      t.teardown(mock.restore);
+
+      const output = await captureStdout(() =>
+        inspect.handler({ proxyId: 1, openapi: true, format: "json" }),
+      );
+      const parsed = parseJson(output) as { openapi: string };
+      t.equal(parsed.openapi, "3.0.0");
+      t.equal(mock.calls.length, 1);
+      t.match(mock.calls.at(0), /\/openapi$/);
+      t.end();
+    },
+  );
+
   await t.test("openapi flag with json format", async (t) => {
     const mock = mockFetch((url) => {
       if (url.includes("/openapi")) {
@@ -367,7 +550,7 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: true, format: "json" }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { openapi: string };
     t.equal(parsed.openapi, "3.0.0");
     t.end();
   });
