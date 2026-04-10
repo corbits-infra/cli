@@ -10,6 +10,10 @@ import {
 } from "../src/output/format.js";
 import { captureStdout } from "./helpers.js";
 
+function parseJson(value: string): unknown {
+  return JSON.parse(value) as unknown;
+}
+
 await t.test("formatPrice", async (t) => {
   await t.test("formats micro-USDC to dollars", async (t) => {
     t.equal(formatPrice(10000), "$0.010000");
@@ -25,7 +29,7 @@ await t.test("formatPrice", async (t) => {
 await t.test("printJson", async (t) => {
   await t.test("outputs formatted JSON", async (t) => {
     const output = await captureStdout(() => printJson({ a: 1, b: "two" }));
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { a: number; b: string };
     t.equal(parsed.a, 1);
     t.equal(parsed.b, "two");
     t.end();
@@ -88,9 +92,9 @@ await t.test("printFormatted", async (t) => {
     const output = await captureStdout(() =>
       printFormatted("json", items, ["ID", "Name"], toRow),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { id: number; name: string }[];
     t.equal(parsed.length, 2);
-    t.equal(parsed[0].name, "alpha");
+    t.equal(parsed.at(0)?.name, "alpha");
     t.end();
   });
 
