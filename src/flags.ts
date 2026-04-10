@@ -12,7 +12,6 @@ const formatType = {
     }
     return s as OutputFormat;
   },
-  defaultValue: () => "table" as OutputFormat,
   description: "table, json, or yaml",
   displayName: "format",
 };
@@ -23,3 +22,13 @@ export const formatFlag = option({
   short: "f",
   description: "Output format: table, json, yaml (default: table)",
 });
+
+export function resolveOutputFormat(
+  format: OutputFormat | undefined,
+): OutputFormat {
+  if (format != null) {
+    return format;
+  }
+
+  return process.env.NO_DNA ? "json" : "table";
+}

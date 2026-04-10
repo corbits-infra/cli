@@ -7,7 +7,7 @@ import {
   printJson,
   printYaml,
 } from "../output/format.js";
-import { formatFlag } from "../flags.js";
+import { formatFlag, resolveOutputFormat } from "../flags.js";
 
 export const discover = command({
   name: "discover",
@@ -18,7 +18,7 @@ export const discover = command({
     format: formatFlag,
   },
   handler: async ({ query, tag, format: formatArg }) => {
-    const format = formatArg ?? "table";
+    const format = resolveOutputFormat(formatArg);
     let proxies: Proxy[];
     let endpoints: SearchEndpoint[] = [];
 

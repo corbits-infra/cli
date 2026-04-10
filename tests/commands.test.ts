@@ -12,6 +12,11 @@ import {
 const { discover } = await import("../src/commands/discover.js");
 const { inspect } = await import("../src/commands/inspect.js");
 
+function parseJson(value: string): unknown {
+  return JSON.parse(value) as unknown;
+}
+
+
 await t.test("discover command", async (t) => {
   await t.test("lists all proxies in table with headers", async (t) => {
     const mock = mockFetch(() => ({
@@ -159,9 +164,9 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { name: string }[];
     t.ok(Array.isArray(parsed));
-    t.equal(parsed[0].name, "helius");
+    t.equal(parsed.at(0)?.name, "helius");
     t.end();
   });
 
@@ -201,10 +206,35 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as {
+      proxies: unknown[];
+      endpoints: unknown[];
+    };
     t.ok(parsed.proxies);
     t.ok(parsed.endpoints);
     t.equal(parsed.endpoints.length, 1);
+    t.end();
+  });
+
+  await t.test("defaults to JSON when NO_DNA is set", async (t) => {
+    const mock = mockFetch(() => ({
+      status: 200,
+      body: {
+        data: [validProxy],
+        pagination: { nextCursor: null, hasMore: false },
+      },
+    }));
+    t.teardown(mock.restore);
+
+    process.env.NO_DNA = "1";
+    t.teardown(() => { delete process.env.NO_DNA; });
+
+    const output = await captureStdout(() =>
+      discover.handler({ query: undefined, tag: undefined, format: undefined }),
+    );
+    const parsed = parseJson(output) as { name: string }[];
+    t.ok(Array.isArray(parsed));
+    t.equal(parsed.at(0)?.name, "helius");
     t.end();
   });
 
@@ -280,11 +310,14 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: false, format: "json" }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as {
+      proxy: { name: string };
+      endpoints: { path_pattern: string }[];
+    };
     t.equal(parsed.proxy.name, "helius");
     t.ok(Array.isArray(parsed.endpoints));
     t.equal(parsed.endpoints.length, 1);
-    t.equal(parsed.endpoints[0].path_pattern, "/v1/tokens/*");
+    t.equal(parsed.endpoints.at(0)?.path_pattern, "/v1/tokens/*");
     t.end();
   });
 
@@ -297,6 +330,25 @@ await t.test("inspect command", async (t) => {
     );
     t.ok(output.includes("name: helius"));
     t.ok(output.includes("path_pattern: /v1/tokens/*"));
+    t.end();
+  });
+
+  await t.test("defaults to JSON when NO_DNA is set", async (t) => {
+    const mock = inspectMock([sampleEndpoint]);
+    t.teardown(mock.restore);
+
+    process.env.NO_DNA = "1";
+    t.teardown(() => { delete process.env.NO_DNA; });
+
+    const output = await captureStdout(() =>
+      inspect.handler({ proxyId: 1, openapi: false, format: undefined }),
+    );
+    const parsed = parseJson(output) as {
+      proxy: { name: string };
+      endpoints: { path_pattern: string }[];
+    };
+    t.equal(parsed.proxy.name, "helius");
+    t.equal(parsed.endpoints.at(0)?.path_pattern, "/v1/tokens/*");
     t.end();
   });
 
@@ -367,7 +419,7 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: true, format: "json" }),
     );
-    const parsed = JSON.parse(output);
+    const parsed = parseJson(output) as { openapi: string };
     t.equal(parsed.openapi, "3.0.0");
     t.end();
   });

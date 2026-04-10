@@ -42,7 +42,7 @@ async function request<T extends Type<any>>(
   }
 
   const json: unknown = await res.json();
-  const result = schema(json);
+  const result: unknown = schema(json);
 
   if (result instanceof arktype.errors) {
     throw new ValidationError(result.summary);

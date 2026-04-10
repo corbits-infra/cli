@@ -4,7 +4,12 @@ export function mockFetch(
   const original = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = typeof input === "string" ? input : input.toString();
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     calls.push(url);
     const { status, body } = handler(url);
     return {
@@ -25,7 +30,7 @@ export function mockFetch(
 }
 
 export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
-  const original = process.stdout.write;
+  const original = process.stdout.write.bind(process.stdout);
   let captured = "";
   process.stdout.write = ((chunk: string) => {
     captured += chunk;
@@ -38,7 +43,7 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
         process.stdout.write = original;
         return captured;
       },
-      (err) => {
+      (err: unknown) => {
         process.stdout.write = original;
         throw err;
       },
