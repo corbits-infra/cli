@@ -26,12 +26,10 @@ export const inspect = command({
     format: formatFlag,
   },
   handler: async ({ proxyId, openapi, format }) => {
-    const proxy = await getProxy(proxyId);
-    const endpoints = await listAllProxyEndpoints(proxyId);
-
     if (openapi) {
+      const fmt = await resolveOutputFormat(format);
       const spec = await getProxyOpenapi(proxyId);
-      if (format === "json") {
+      if (fmt === "json") {
         printJson(spec.data.spec);
       } else {
         printYaml(spec.data.spec);
@@ -39,7 +37,9 @@ export const inspect = command({
       return;
     }
 
-    const fmt = resolveOutputFormat(format);
+    const fmt = await resolveOutputFormat(format);
+    const proxy = await getProxy(proxyId);
+    const endpoints = await listAllProxyEndpoints(proxyId);
 
     if (fmt === "json") {
       printJson({ proxy: proxy.data, endpoints });

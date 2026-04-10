@@ -1,4 +1,5 @@
 import { type as arktype, type Type } from "arktype";
+import { loadConfig } from "../config/load.js";
 import {
   type Proxy,
   type Endpoint,
@@ -9,7 +10,7 @@ import {
   EndpointsResponse,
 } from "./schemas.js";
 
-const BASE_URL = "https://api.corbits.dev";
+const DEFAULT_BASE_URL = "https://api.corbits.dev";
 
 class ApiError extends Error {
   constructor(
@@ -33,7 +34,9 @@ async function request<T extends Type<any>>(
   schema: T,
   path: string,
 ): Promise<T["infer"]> {
-  const url = `${BASE_URL}${path}`;
+  const loaded = await loadConfig();
+  const baseUrl = loaded?.effective.preferences.apiUrl ?? DEFAULT_BASE_URL;
+  const url = `${baseUrl}${path}`;
   const res = await fetch(url);
 
   if (!res.ok) {
