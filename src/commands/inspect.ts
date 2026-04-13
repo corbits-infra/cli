@@ -3,16 +3,16 @@ import {
   getProxy,
   listAllProxyEndpoints,
   getProxyOpenapi,
+  resolveApiBaseUrl,
 } from "../api/client.js";
 import {
   formatPrice,
   printFormatted,
   printJson,
   printYaml,
+  writeLine,
 } from "../output/format.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
-
-const stdout = (s: string) => process.stdout.write(s + "\n");
 
 export const inspect = command({
   name: "inspect",
@@ -26,9 +26,11 @@ export const inspect = command({
     format: formatFlag,
   },
   handler: async ({ proxyId, openapi, format }) => {
+    const baseUrl = await resolveApiBaseUrl();
+
     if (openapi) {
       const fmt = await resolveOutputFormat(format);
-      const spec = await getProxyOpenapi(proxyId);
+      const spec = await getProxyOpenapi(proxyId, baseUrl);
       if (fmt === "json") {
         printJson(spec.data.spec);
       } else {
@@ -38,8 +40,8 @@ export const inspect = command({
     }
 
     const fmt = await resolveOutputFormat(format);
-    const proxy = await getProxy(proxyId);
-    const endpoints = await listAllProxyEndpoints(proxyId);
+    const proxy = await getProxy(proxyId, baseUrl);
+    const endpoints = await listAllProxyEndpoints(proxyId, baseUrl);
 
     if (fmt === "json") {
       printJson({ proxy: proxy.data, endpoints });
@@ -51,13 +53,13 @@ export const inspect = command({
     }
 
     const p = proxy.data;
-    stdout(`${p.name} (ID: ${p.id})`);
-    stdout(`  URL:       ${p.url}`);
-    stdout(`  Price:     ${formatPrice(p.default_price)}`);
-    stdout(`  Scheme:    ${p.default_scheme}`);
-    stdout(`  Tags:      ${p.tags.join(", ")}`);
-    stdout(`  Endpoints: ${p.endpoint_count}`);
-    stdout("");
+    writeLine(`${p.name} (ID: ${p.id})`);
+    writeLine(`  URL:       ${p.url}`);
+    writeLine(`  Price:     ${formatPrice(p.default_price)}`);
+    writeLine(`  Scheme:    ${p.default_scheme}`);
+    writeLine(`  Tags:      ${p.tags.join(", ")}`);
+    writeLine(`  Endpoints: ${p.endpoint_count}`);
+    writeLine("");
 
     if (endpoints.length > 0) {
       printFormatted(

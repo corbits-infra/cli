@@ -3,24 +3,30 @@ import { stringify as yamlStringify } from "yaml";
 
 export type OutputFormat = "table" | "json" | "yaml";
 
-function write(s: string): void {
+export function writeLine(s: string): void {
   process.stdout.write(s + "\n");
 }
 
 export function printJson(data: unknown): void {
-  write(JSON.stringify(data, null, 2));
+  writeLine(JSON.stringify(data, null, 2));
 }
 
 export function printYaml(data: unknown): void {
-  write(yamlStringify(data));
+  writeLine(yamlStringify(data));
 }
 
 export function printTable(head: string[], rows: string[][]): void {
-  const table = new Table({ head });
+  const table = new Table({
+    head,
+    style: {
+      head: [],
+      border: [],
+    },
+  });
   for (const row of rows) {
     table.push(row);
   }
-  write(table.toString());
+  writeLine(table.toString());
 }
 
 export function formatPrice(microUsdc: number): string {

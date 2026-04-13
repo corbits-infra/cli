@@ -1,35 +1,149 @@
 import { parse, stringify } from "smol-toml";
+import os from "node:os";
+import path from "node:path";
 import type { OutputFormat } from "../output/format.js";
-import { expandHome } from "./path.js";
 
-export type NetworkConfig = {
+export const PAYMENT_NETWORKS = [
+  "solana-devnet",
+  "solana-mainnet",
+  "solana-localnet",
+  "base-sepolia",
+  "base-mainnet",
+] as const;
+
+export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
+export type WalletFamily = "solana" | "evm";
+
+export type KeypairWalletConfig = {
   address: string;
-  keyfile: string;
+  kind: "keypair";
+  path: string;
 };
+
+export type OwsWalletConfig = {
+  address: string;
+  kind: "ows";
+  wallet_id: string;
+};
+
+export type WalletConfig = KeypairWalletConfig | OwsWalletConfig;
+
+export type WalletRegistry = {
+  solana?: WalletConfig;
+  evm?: WalletConfig;
+};
+
+export type RpcUrlOverrides = Partial<Record<PaymentNetwork, string>>;
 
 export type CorbitsConfig = {
   version: 1;
-  active_network: string;
   preferences: {
     format: OutputFormat;
     api_url: string;
   };
-  networks: Record<string, NetworkConfig>;
+  payment: {
+    network: PaymentNetwork;
+    rpc_url_overrides?: RpcUrlOverrides;
+  };
+  wallets: WalletRegistry;
 };
 
-export type EffectiveConfig = {
+export type ResolvedKeypairWallet = {
+  address: string;
+  family: WalletFamily;
+  kind: "keypair";
+  path: string;
+  expandedPath: string;
+};
+
+export type ResolvedOwsWallet = {
+  address: string;
+  family: WalletFamily;
+  kind: "ows";
+  walletId: string;
+};
+
+export type ResolvedWallet = ResolvedKeypairWallet | ResolvedOwsWallet;
+
+export type ResolvedConfig = {
   version: 1;
-  activeNetwork: string;
   preferences: {
     format: OutputFormat;
     apiUrl: string;
   };
-  activeAccount: {
-    network: string;
+  payment: {
+    network: PaymentNetwork;
+    family: WalletFamily;
     address: string;
-    keyfile: string;
-    expandedKeyfile: string;
+    asset: string;
+    rpcUrl: string;
   };
+  activeWallet: ResolvedWallet;
+};
+
+type ConfigRecord = Record<string, unknown>;
+
+type WalletInputs = {
+  solanaPath?: string;
+  solanaOws?: string;
+  solanaAddress?: string;
+  evmPath?: string;
+  evmOws?: string;
+  evmAddress?: string;
+};
+
+type ConfigInitInput = {
+  network: string;
+  rpcUrl?: string;
+  format?: OutputFormat;
+  apiUrl?: string;
+} & WalletInputs;
+
+export type ConfigUpdateInput = {
+  network?: string;
+  rpcUrl?: string;
+  format?: OutputFormat;
+  apiUrl?: string;
+} & WalletInputs;
+
+type WalletUpdateInput = {
+  address?: string;
+  keypair?: string;
+  ows?: string;
+};
+
+export const DEFAULT_API_URL = "https://api.corbits.dev";
+const DEFAULT_OUTPUT_FORMAT: OutputFormat = "table";
+
+const PAYMENT_NETWORK_DEFAULTS: Record<
+  PaymentNetwork,
+  { family: WalletFamily; asset: string; rpcUrl: string }
+> = {
+  "solana-devnet": {
+    family: "solana",
+    asset: "USDC",
+    rpcUrl: "https://api.devnet.solana.com",
+  },
+  "solana-mainnet": {
+    family: "solana",
+    asset: "USDC",
+    rpcUrl: "https://api.mainnet-beta.solana.com",
+  },
+  "solana-localnet": {
+    family: "solana",
+    asset: "USDC",
+    rpcUrl: "http://127.0.0.1:8899",
+  },
+  "base-sepolia": {
+    family: "evm",
+    asset: "USDC",
+    rpcUrl: "https://sepolia.base.org",
+  },
+  "base-mainnet": {
+    family: "evm",
+    asset: "USDC",
+    rpcUrl: "https://mainnet.base.org",
+  },
 };
 
 export class ConfigError extends Error {
@@ -39,159 +153,669 @@ export class ConfigError extends Error {
   }
 }
 
-type RawConfig = {
-  version?: unknown;
-  active_network?: unknown;
-  preferences?: {
-    format?: unknown;
-    api_url?: unknown;
+export function requireConfigString(value: unknown, message: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ConfigError(message);
+  }
+
+  return value.trim();
+}
+
+export function listPaymentNetworks(): readonly PaymentNetwork[] {
+  return PAYMENT_NETWORKS;
+}
+
+export function formatSupportedPaymentNetworks(): string {
+  return PAYMENT_NETWORKS.join(", ");
+}
+
+export function isPaymentNetwork(value: string): value is PaymentNetwork {
+  return value in PAYMENT_NETWORK_DEFAULTS;
+}
+
+export function getWalletFamilyForNetwork(
+  network: PaymentNetwork,
+): WalletFamily {
+  return PAYMENT_NETWORK_DEFAULTS[network].family;
+}
+
+export function getPaymentNetworkDefaults(network: PaymentNetwork): {
+  asset: string;
+  rpcUrl: string;
+} {
+  const defaults = PAYMENT_NETWORK_DEFAULTS[network];
+  return {
+    asset: defaults.asset,
+    rpcUrl: defaults.rpcUrl,
   };
-  networks?: Record<string, { address?: unknown; keyfile?: unknown }>;
-};
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
-function isOutputFormat(value: unknown): value is OutputFormat {
-  return value === "table" || value === "json" || value === "yaml";
+export function parsePaymentNetwork(
+  value: string,
+  message = "config requires --network <name>",
+): PaymentNetwork {
+  const network = requireConfigString(value, message);
+  if (isPaymentNetwork(network)) {
+    return network;
+  }
+
+  throw new ConfigError(
+    `Invalid payment network "${network}". Must be one of: ${formatSupportedPaymentNetworks()}`,
+  );
 }
 
-function validateAbsoluteUrl(value: string): void {
+export function buildKeypairWalletConfig(
+  address: string,
+  pathValue: string,
+): KeypairWalletConfig {
+  return {
+    address: requireConfigString(address, "config requires a wallet address"),
+    kind: "keypair",
+    path: requireConfigString(pathValue, "config requires a wallet path"),
+  };
+}
+
+export function buildOwsWalletConfig(
+  address: string,
+  walletId: string,
+): OwsWalletConfig {
+  return {
+    address: requireConfigString(address, "config requires a wallet address"),
+    kind: "ows",
+    wallet_id: requireConfigString(walletId, "config requires a wallet id"),
+  };
+}
+
+export function expandHome(value: string): string {
+  if (value === "~") {
+    return os.homedir();
+  }
+  if (value.startsWith("~/")) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return value;
+}
+
+function isConfigRecord(value: unknown): value is ConfigRecord {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRecord(value: unknown, message: string): ConfigRecord {
+  if (!isConfigRecord(value)) {
+    throw new ConfigError(message);
+  }
+
+  return value;
+}
+
+function assertAllowedKeys(
+  value: ConfigRecord,
+  allowedKeys: readonly string[],
+  context: string,
+): void {
+  const allowed = new Set(allowedKeys);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new ConfigError(`Unknown ${context} key "${key}"`);
+    }
+  }
+}
+
+function readOutputFormat(value: unknown): OutputFormat {
+  if (value === "table" || value === "json" || value === "yaml") {
+    return value;
+  }
+
+  throw new ConfigError(
+    'Config preferences.format must be "table", "json", or "yaml"',
+  );
+}
+
+function readVersion(value: unknown): 1 {
+  if (value !== 1) {
+    throw new ConfigError("Config version must be 1");
+  }
+
+  return 1;
+}
+
+function validateAbsoluteUrl(value: string, field: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw new ConfigError(`Invalid preferences.api_url "${value}"`);
+    throw new ConfigError(`Invalid ${field} "${value}"`);
   }
 
   if (
     parsed.host.length === 0 ||
     (parsed.protocol !== "http:" && parsed.protocol !== "https:")
   ) {
-    throw new ConfigError(`Invalid preferences.api_url "${value}"`);
+    throw new ConfigError(`Invalid ${field} "${value}"`);
   }
+
+  return value;
+}
+
+function normalizeRpcUrlOverrides(
+  overrides: RpcUrlOverrides | undefined,
+): RpcUrlOverrides | undefined {
+  if (overrides == null) {
+    return undefined;
+  }
+
+  const normalized = Object.fromEntries(
+    Object.entries(overrides).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
+  ) as RpcUrlOverrides;
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function parseRpcUrlOverrides(value: unknown): RpcUrlOverrides | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const record = readRecord(
+    value,
+    "Config payment.rpc_url_overrides must be a table",
+  );
+  const overrides: RpcUrlOverrides = {};
+
+  for (const [network, rpcUrl] of Object.entries(record)) {
+    if (!isPaymentNetwork(network)) {
+      throw new ConfigError(
+        `Config payment.rpc_url_overrides key "${network}" must be one of: ${formatSupportedPaymentNetworks()}`,
+      );
+    }
+
+    overrides[network] = validateAbsoluteUrl(
+      requireConfigString(
+        rpcUrl,
+        `Config payment.rpc_url_overrides.${network} must be a non-empty URL`,
+      ),
+      `payment.rpc_url_overrides.${network}`,
+    );
+  }
+
+  return normalizeRpcUrlOverrides(overrides);
+}
+
+function buildRpcUrlOverrideUpdate(
+  network: PaymentNetwork,
+  rpcUrl: string,
+): RpcUrlOverrides {
+  return {
+    [network]: validateAbsoluteUrl(
+      requireConfigString(rpcUrl, "config requires --rpc-url <url>"),
+      `payment.rpc_url_overrides.${network}`,
+    ),
+  };
+}
+
+function parseWalletConfig(
+  value: unknown,
+  family: WalletFamily,
+): WalletConfig | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const context = `wallets.${family}`;
+  const wallet = readRecord(value, `Config ${context} must be a table`);
+  assertAllowedKeys(wallet, ["address", "kind", "path", "wallet_id"], context);
+
+  const address = requireConfigString(
+    wallet.address,
+    `Config ${context}.address must be a non-empty string`,
+  );
+
+  if (wallet.kind === "keypair") {
+    if (wallet.wallet_id != null) {
+      throw new ConfigError(
+        `Config ${context}.wallet_id is not allowed when kind is "keypair"`,
+      );
+    }
+
+    return {
+      address,
+      kind: "keypair",
+      path: requireConfigString(
+        wallet.path,
+        `Config ${context}.path must be non-empty when kind is "keypair"`,
+      ),
+    };
+  }
+
+  if (wallet.kind === "ows") {
+    if (wallet.path != null) {
+      throw new ConfigError(
+        `Config ${context}.path is not allowed when kind is "ows"`,
+      );
+    }
+
+    return {
+      address,
+      kind: "ows",
+      wallet_id: requireConfigString(
+        wallet.wallet_id,
+        `Config ${context}.wallet_id must be non-empty when kind is "ows"`,
+      ),
+    };
+  }
+
+  throw new ConfigError(`Config ${context}.kind must be "keypair" or "ows"`);
+}
+
+function normalizeWalletConfig(wallet: WalletConfig): WalletConfig {
+  if (wallet.kind === "keypair") {
+    return {
+      address: wallet.address,
+      kind: "keypair",
+      path: wallet.path,
+    };
+  }
+
+  return {
+    address: wallet.address,
+    kind: "ows",
+    wallet_id: wallet.wallet_id,
+  };
+}
+
+function normalizeWalletRegistry(wallets: WalletRegistry): WalletRegistry {
+  const normalized: WalletRegistry = {};
+
+  if (wallets.solana != null) {
+    normalized.solana = normalizeWalletConfig(wallets.solana);
+  }
+  if (wallets.evm != null) {
+    normalized.evm = normalizeWalletConfig(wallets.evm);
+  }
+
+  return normalized;
+}
+
+function requireWalletForFamily(
+  wallets: WalletRegistry,
+  family: WalletFamily,
+  paymentNetwork: PaymentNetwork,
+): WalletConfig {
+  const wallet = wallets[family];
+  if (wallet == null) {
+    throw new ConfigError(
+      `Config wallets.${family} is required for payment.network "${paymentNetwork}"`,
+    );
+  }
+
+  return wallet;
+}
+
+function hasWalletUpdate(input: WalletUpdateInput): boolean {
+  return input.address != null || input.keypair != null || input.ows != null;
+}
+
+function buildWalletUpdateInput(
+  address: string | undefined,
+  keypair: string | undefined,
+  ows: string | undefined,
+): WalletUpdateInput {
+  return {
+    ...(address == null ? {} : { address }),
+    ...(keypair == null ? {} : { keypair }),
+    ...(ows == null ? {} : { ows }),
+  };
+}
+
+function buildWalletConfigFromInput(
+  family: WalletFamily,
+  input: WalletUpdateInput,
+): WalletConfig {
+  if (input.keypair != null && input.ows != null) {
+    throw new ConfigError(
+      `config ${family} wallet must provide only one of --${family}-path or --${family}-ows`,
+    );
+  }
+
+  const address = requireConfigString(
+    input.address,
+    `config ${family} wallet requires --${family}-address <addr>`,
+  );
+
+  if (input.keypair != null) {
+    return buildKeypairWalletConfig(address, input.keypair);
+  }
+
+  if (input.ows != null) {
+    return buildOwsWalletConfig(address, input.ows);
+  }
+
+  throw new ConfigError(
+    `config ${family} wallet requires one of --${family}-path or --${family}-ows`,
+  );
+}
+
+function buildWalletRegistry(input: WalletInputs): WalletRegistry {
+  const wallets: WalletRegistry = {};
+  const solanaInput = buildWalletUpdateInput(
+    input.solanaAddress,
+    input.solanaPath,
+    input.solanaOws,
+  );
+  const evmInput = buildWalletUpdateInput(
+    input.evmAddress,
+    input.evmPath,
+    input.evmOws,
+  );
+
+  if (hasWalletUpdate(solanaInput)) {
+    wallets.solana = buildWalletConfigFromInput("solana", solanaInput);
+  }
+  if (hasWalletUpdate(evmInput)) {
+    wallets.evm = buildWalletConfigFromInput("evm", evmInput);
+  }
+
+  return wallets;
+}
+
+function mergeWalletUpdate(
+  family: WalletFamily,
+  current: WalletConfig | undefined,
+  input: WalletUpdateInput,
+): WalletConfig | undefined {
+  if (!hasWalletUpdate(input)) {
+    return current;
+  }
+
+  if (input.keypair != null || input.ows != null) {
+    return buildWalletConfigFromInput(family, input);
+  }
+
+  if (input.address == null) {
+    return current;
+  }
+
+  if (current == null) {
+    throw new ConfigError(
+      `config ${family} wallet requires one of --${family}-path or --${family}-ows before --${family}-address can be used`,
+    );
+  }
+
+  if (current.kind === "keypair") {
+    return buildKeypairWalletConfig(input.address, current.path);
+  }
+
+  return buildOwsWalletConfig(input.address, current.wallet_id);
+}
+
+function mergeWalletRegistry(
+  current: WalletRegistry,
+  input: WalletInputs,
+): WalletRegistry {
+  const solana = mergeWalletUpdate(
+    "solana",
+    current.solana,
+    buildWalletUpdateInput(
+      input.solanaAddress,
+      input.solanaPath,
+      input.solanaOws,
+    ),
+  );
+  const evm = mergeWalletUpdate(
+    "evm",
+    current.evm,
+    buildWalletUpdateInput(input.evmAddress, input.evmPath, input.evmOws),
+  );
+
+  return normalizeWalletRegistry({
+    ...(solana == null ? {} : { solana }),
+    ...(evm == null ? {} : { evm }),
+  });
+}
+
+export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
+  const network = parsePaymentNetwork(
+    input.network,
+    "config init requires --network <name>",
+  );
+  const wallets = buildWalletRegistry(input);
+
+  requireWalletForFamily(wallets, getWalletFamilyForNetwork(network), network);
+
+  return normalizeConfig({
+    version: 1,
+    preferences: {
+      format: input.format ?? DEFAULT_OUTPUT_FORMAT,
+      api_url: validateAbsoluteUrl(
+        requireConfigString(
+          input.apiUrl ?? DEFAULT_API_URL,
+          "config init requires --api-url <url>",
+        ),
+        "preferences.api_url",
+      ),
+    },
+    payment: {
+      network,
+      ...(input.rpcUrl == null
+        ? {}
+        : {
+            rpc_url_overrides: buildRpcUrlOverrideUpdate(network, input.rpcUrl),
+          }),
+    },
+    wallets,
+  });
+}
+
+export function updateConfig(
+  config: CorbitsConfig,
+  input: ConfigUpdateInput,
+): CorbitsConfig {
+  const targetNetwork =
+    input.network == null
+      ? config.payment.network
+      : parsePaymentNetwork(
+          input.network,
+          "config set requires --network <name>",
+        );
+  const nextRpcUrlOverrides =
+    input.rpcUrl == null
+      ? config.payment.rpc_url_overrides
+      : normalizeRpcUrlOverrides({
+          ...(config.payment.rpc_url_overrides ?? {}),
+          ...buildRpcUrlOverrideUpdate(targetNetwork, input.rpcUrl),
+        });
+  const next: CorbitsConfig = {
+    version: 1,
+    preferences: {
+      format: input.format ?? config.preferences.format,
+      api_url:
+        input.apiUrl == null
+          ? config.preferences.api_url
+          : validateAbsoluteUrl(
+              requireConfigString(
+                input.apiUrl,
+                "config set requires --api-url <url>",
+              ),
+              "preferences.api_url",
+            ),
+    },
+    payment: {
+      network: targetNetwork,
+      ...(nextRpcUrlOverrides == null
+        ? {}
+        : { rpc_url_overrides: nextRpcUrlOverrides }),
+    },
+    wallets: mergeWalletRegistry(config.wallets, input),
+  };
+
+  requireWalletForFamily(
+    next.wallets,
+    getWalletFamilyForNetwork(next.payment.network),
+    next.payment.network,
+  );
+
+  return normalizeConfig(next);
 }
 
 export function parseConfig(text: string): CorbitsConfig {
-  let raw: RawConfig;
+  let raw: unknown;
   try {
-    raw = parse(text) as RawConfig;
+    raw = parse(text);
   } catch (err) {
     throw new ConfigError(
       `Invalid config TOML: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
-  if (raw.version !== 1) {
-    throw new ConfigError("Config version must be 1");
-  }
-  if (!isNonEmptyString(raw.active_network)) {
-    throw new ConfigError("Config active_network must be a non-empty string");
-  }
-  if (raw.preferences == null || typeof raw.preferences !== "object") {
-    throw new ConfigError("Config preferences section is required");
-  }
-  if (!isOutputFormat(raw.preferences.format)) {
+  const config = readRecord(raw, "Config must be a TOML table");
+  assertAllowedKeys(
+    config,
+    ["version", "preferences", "payment", "wallets"],
+    "config",
+  );
+
+  const version = readVersion(config.version);
+
+  const preferences = readRecord(
+    config.preferences,
+    "Config preferences section is required",
+  );
+  assertAllowedKeys(preferences, ["format", "api_url"], "preferences");
+
+  const payment = readRecord(
+    config.payment,
+    "Config payment section is required",
+  );
+  assertAllowedKeys(payment, ["network", "rpc_url_overrides"], "payment");
+
+  const wallets = readRecord(
+    config.wallets,
+    "Config wallets section is required",
+  );
+  assertAllowedKeys(wallets, ["solana", "evm"], "wallets");
+
+  const solanaWallet = parseWalletConfig(wallets.solana, "solana");
+  const evmWallet = parseWalletConfig(wallets.evm, "evm");
+  const rpcUrlOverrides = parseRpcUrlOverrides(payment.rpc_url_overrides);
+
+  if (typeof payment.network !== "string") {
     throw new ConfigError(
-      'Config preferences.format must be "table", "json", or "yaml"',
+      `Config payment.network must be one of: ${formatSupportedPaymentNetworks()}`,
     );
   }
-  if (!isNonEmptyString(raw.preferences.api_url)) {
-    throw new ConfigError("Config preferences.api_url must be a non-empty URL");
-  }
-  validateAbsoluteUrl(raw.preferences.api_url);
+  const network = parsePaymentNetwork(
+    payment.network,
+    `Config payment.network must be one of: ${formatSupportedPaymentNetworks()}`,
+  );
 
-  if (raw.networks == null || typeof raw.networks !== "object") {
-    throw new ConfigError("Config networks section is required");
-  }
-
-  const networks = Object.entries(raw.networks).reduce<
-    Record<string, NetworkConfig>
-  >((acc, [name, network]) => {
-    if (!isNonEmptyString(name)) {
-      throw new ConfigError("Config network names must be non-empty strings");
-    }
-    if (network == null || typeof network !== "object") {
-      throw new ConfigError(`Config networks.${name} must be a table`);
-    }
-    if (!isNonEmptyString(network.address)) {
-      throw new ConfigError(
-        `Config networks.${name}.address must be non-empty`,
-      );
-    }
-    if (!isNonEmptyString(network.keyfile)) {
-      throw new ConfigError(
-        `Config networks.${name}.keyfile must be non-empty`,
-      );
-    }
-    acc[name] = {
-      address: network.address,
-      keyfile: network.keyfile,
-    };
-    return acc;
-  }, {});
-
-  if (Object.keys(networks).length === 0) {
-    throw new ConfigError("Config networks section must not be empty");
-  }
-  if (!(raw.active_network in networks)) {
-    throw new ConfigError(
-      `Config active_network "${raw.active_network}" must exist in networks`,
-    );
-  }
-
-  return {
-    version: 1,
-    active_network: raw.active_network,
+  const parsed: CorbitsConfig = {
+    version,
     preferences: {
-      format: raw.preferences.format,
-      api_url: raw.preferences.api_url,
+      format: readOutputFormat(preferences.format),
+      api_url: validateAbsoluteUrl(
+        requireConfigString(
+          preferences.api_url,
+          "Config preferences.api_url must be a non-empty URL",
+        ),
+        "preferences.api_url",
+      ),
     },
-    networks,
+    payment: {
+      network,
+      ...(rpcUrlOverrides == null
+        ? {}
+        : { rpc_url_overrides: rpcUrlOverrides }),
+    },
+    wallets: normalizeWalletRegistry({
+      ...(solanaWallet == null ? {} : { solana: solanaWallet }),
+      ...(evmWallet == null ? {} : { evm: evmWallet }),
+    }),
   };
-}
 
-export function resolveEffectiveConfig(config: CorbitsConfig): EffectiveConfig {
-  const active = config.networks[config.active_network];
-  if (active == null) {
-    throw new ConfigError(
-      `Config active_network "${config.active_network}" must exist in networks`,
-    );
-  }
+  requireWalletForFamily(
+    parsed.wallets,
+    getWalletFamilyForNetwork(parsed.payment.network),
+    parsed.payment.network,
+  );
 
-  return {
-    version: config.version,
-    activeNetwork: config.active_network,
-    preferences: {
-      format: config.preferences.format,
-      apiUrl: config.preferences.api_url,
-    },
-    activeAccount: {
-      network: config.active_network,
-      address: active.address,
-      keyfile: active.keyfile,
-      expandedKeyfile: expandHome(active.keyfile),
-    },
-  };
+  return parsed;
 }
 
 export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
-  const sortedNetworks = Object.fromEntries(
-    Object.entries(config.networks).sort(([a], [b]) => a.localeCompare(b)),
+  const rpcUrlOverrides = normalizeRpcUrlOverrides(
+    config.payment.rpc_url_overrides,
   );
 
   return {
     version: 1,
-    active_network: config.active_network,
     preferences: {
       format: config.preferences.format,
       api_url: config.preferences.api_url,
     },
-    networks: sortedNetworks,
+    payment: {
+      network: config.payment.network,
+      ...(rpcUrlOverrides == null
+        ? {}
+        : { rpc_url_overrides: rpcUrlOverrides }),
+    },
+    wallets: normalizeWalletRegistry(config.wallets),
   };
 }
 
 export function stringifyConfig(config: CorbitsConfig): string {
   return stringify(normalizeConfig(config));
+}
+
+function resolveActiveWallet(
+  wallets: WalletRegistry,
+  network: PaymentNetwork,
+): ResolvedWallet {
+  const family = getWalletFamilyForNetwork(network);
+  const wallet = requireWalletForFamily(wallets, family, network);
+
+  if (wallet.kind === "keypair") {
+    return {
+      address: wallet.address,
+      family,
+      kind: "keypair",
+      path: wallet.path,
+      expandedPath: expandHome(wallet.path),
+    };
+  }
+
+  return {
+    address: wallet.address,
+    family,
+    kind: "ows",
+    walletId: wallet.wallet_id,
+  };
+}
+
+export function resolveConfig(config: CorbitsConfig): ResolvedConfig {
+  const activeWallet = resolveActiveWallet(
+    config.wallets,
+    config.payment.network,
+  );
+  const defaults = getPaymentNetworkDefaults(config.payment.network);
+  const rpcUrl =
+    config.payment.rpc_url_overrides?.[config.payment.network] ??
+    defaults.rpcUrl;
+
+  return {
+    version: config.version,
+    preferences: {
+      format: config.preferences.format,
+      apiUrl: config.preferences.api_url,
+    },
+    payment: {
+      network: config.payment.network,
+      family: getWalletFamilyForNetwork(config.payment.network),
+      address: activeWallet.address,
+      asset: defaults.asset,
+      rpcUrl,
+    },
+    activeWallet,
+  };
 }

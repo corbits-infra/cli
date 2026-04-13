@@ -49,6 +49,29 @@ NO_DNA=1 corbits inspect 61   # default to JSON for agent callers
 
 The `--openapi` flag outputs the upstream spec as YAML by default, or as JSON with `--format json`.
 
+### config
+
+Inspect and manage the local Corbits config stored at `~/.config/corbits/config.toml`
+or `$XDG_CONFIG_HOME/corbits/config.toml`.
+
+```
+corbits config show
+corbits config show --format json
+corbits config init --network solana-mainnet --solana-address 7xKX... --solana-path ~/.config/corbits/keys/solana.key --rpc-url https://my.solana.rpc
+corbits config set --evm-address 0x1234 --evm-ows primary-evm
+corbits config set --network base-mainnet
+corbits config set --rpc-url https://mainnet.base.org
+corbits config set --format yaml --api-url https://staging.corbits.dev
+```
+
+`config show` respects `--format` and the configured default format. Table output prints
+the derived payment and wallet summary plus a wallet table; JSON and YAML output include
+the config path and effective expanded wallet path when the active wallet uses a keypair.
+The config file stores the selected payment network and wallet records. Effective payment
+address is resolved from the active wallet, and asset/RPC URL are resolved from network
+defaults. `--rpc-url` stores a network-scoped override, so switching networks only applies
+the override for the selected network.
+
 ### Output formats
 
 All commands support `--format` (`-f`) with values `table` (default), `json`, or `yaml`.

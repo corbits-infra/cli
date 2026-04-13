@@ -1,5 +1,5 @@
 import { type as arktype, type Type } from "arktype";
-import { loadConfig } from "../config/load.js";
+import { DEFAULT_API_URL, loadConfig } from "../config/index.js";
 import {
   type Proxy,
   type Endpoint,
@@ -10,7 +10,10 @@ import {
   EndpointsResponse,
 } from "./schemas.js";
 
-const DEFAULT_BASE_URL = "https://api.corbits.dev";
+export async function resolveApiBaseUrl(): Promise<string> {
+  const loaded = await loadConfig();
+  return loaded?.resolved.preferences.apiUrl ?? DEFAULT_API_URL;
+}
 
 class ApiError extends Error {
   constructor(
@@ -33,10 +36,10 @@ class ValidationError extends Error {
 async function request<T extends Type<any>>(
   schema: T,
   path: string,
+  baseUrl?: string,
 ): Promise<T["infer"]> {
-  const loaded = await loadConfig();
-  const baseUrl = loaded?.effective.preferences.apiUrl ?? DEFAULT_BASE_URL;
-  const url = `${baseUrl}${path}`;
+  const resolvedBaseUrl = baseUrl ?? (await resolveApiBaseUrl());
+  const url = `${resolvedBaseUrl}${path}`;
   const res = await fetch(url);
 
   if (!res.ok) {
@@ -65,11 +68,11 @@ function qs(params: Record<string, string | number | undefined>): string {
   );
 }
 
-export function search(q?: string) {
-  return request(SearchResponse, `/api/v1/search${qs({ q })}`);
+export function search(q?: string, baseUrl?: string) {
+  return request(SearchResponse, `/api/v1/search${qs({ q })}`, baseUrl);
 }
 
-export async function listAllProxies(): Promise<Proxy[]> {
+export async function listAllProxies(baseUrl?: string): Promise<Proxy[]> {
   const all: Proxy[] = [];
   let cursor: string | undefined;
 
@@ -77,6 +80,7 @@ export async function listAllProxies(): Promise<Proxy[]> {
     const page = await request(
       ProxiesResponse,
       `/api/v1/proxies${qs({ cursor, limit: 100 })}`,
+      baseUrl,
     );
     all.push(...page.data);
     if (!page.pagination.hasMore || page.pagination.nextCursor == null) break;
@@ -86,16 +90,21 @@ export async function listAllProxies(): Promise<Proxy[]> {
   return all;
 }
 
-export function getProxy(id: number) {
-  return request(ProxyDetailResponse, `/api/v1/proxies/${id}`);
+export function getProxy(id: number, baseUrl?: string) {
+  return request(ProxyDetailResponse, `/api/v1/proxies/${id}`, baseUrl);
 }
 
-export function getProxyOpenapi(id: number) {
-  return request(ProxyOpenapiResponse, `/api/v1/proxies/${id}/openapi`);
+export function getProxyOpenapi(id: number, baseUrl?: string) {
+  return request(
+    ProxyOpenapiResponse,
+    `/api/v1/proxies/${id}/openapi`,
+    baseUrl,
+  );
 }
 
 export async function listAllProxyEndpoints(
   proxyId: number,
+  baseUrl?: string,
 ): Promise<Endpoint[]> {
   const all: Endpoint[] = [];
   let cursor: string | undefined;
@@ -104,6 +113,7 @@ export async function listAllProxyEndpoints(
     const page = await request(
       EndpointsResponse,
       `/api/v1/proxies/${proxyId}/endpoints${qs({ cursor, limit: 100 })}`,
+      baseUrl,
     );
     all.push(...page.data);
     if (!page.pagination.hasMore || page.pagination.nextCursor == null) break;

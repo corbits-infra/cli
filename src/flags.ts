@@ -1,5 +1,5 @@
 import { option, optional } from "cmd-ts";
-import { loadConfig } from "./config/load.js";
+import { loadConfig } from "./config/index.js";
 import type { OutputFormat } from "./output/format.js";
 
 const FORMAT_VALUES = new Set(["table", "json", "yaml"]);
@@ -21,7 +21,8 @@ export const formatFlag = option({
   type: optional(formatType),
   long: "format",
   short: "f",
-  description: "Output format: table, json, yaml (default: table)",
+  description:
+    "Output format: table, json, yaml (default: config or table; NO_DNA => json)",
 });
 
 export async function resolveOutputFormat(
@@ -36,5 +37,5 @@ export async function resolveOutputFormat(
   }
 
   const loaded = await loadConfig();
-  return loaded?.effective.preferences.format ?? "table";
+  return loaded?.resolved.preferences.format ?? "table";
 }

@@ -1,8 +1,5 @@
 #!/usr/bin/env pnpm tsx
 
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import t from "tap";
 import {
   mockFetch,
@@ -10,6 +7,8 @@ import {
   validProxy,
   validProxy2,
   searchEndpoint,
+  withTempConfigHome,
+  writeConfig,
 } from "./helpers.js";
 
 const { discover } = await import("../src/commands/discover.js");
@@ -17,26 +16,6 @@ const { inspect } = await import("../src/commands/inspect.js");
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
-}
-
-function withTempConfigHome(test: {
-  teardown(fn: () => Promise<void> | void): void;
-}): string {
-  const dir = path.join(
-    os.tmpdir(),
-    `corbits-commands-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-  );
-  process.env.XDG_CONFIG_HOME = dir;
-  test.teardown(async () => {
-    delete process.env.XDG_CONFIG_HOME;
-    await fs.rm(dir, { recursive: true, force: true });
-  });
-  return dir;
-}
-
-async function writeConfig(configHome: string, body: string): Promise<void> {
-  await fs.mkdir(path.join(configHome, "corbits"), { recursive: true });
-  await fs.writeFile(path.join(configHome, "corbits", "config.toml"), body);
 }
 
 await t.test("discover command", async (t) => {
@@ -269,15 +248,18 @@ await t.test("discover command", async (t) => {
       await writeConfig(
         configHome,
         `version = 1
-active_network = "solana-mainnet"
 
 [preferences]
 format = "yaml"
 api_url = "https://api.corbits.dev"
 
-[networks.solana-mainnet]
+[payment]
+network = "solana-mainnet"
+
+[wallets.solana]
 address = "7xKX..."
-keyfile = "~/.config/corbits/keys/solana.key"
+kind = "keypair"
+path = "~/.config/corbits/keys/solana.key"
 `,
       );
       const mock = mockFetch(() => ({
@@ -306,15 +288,18 @@ keyfile = "~/.config/corbits/keys/solana.key"
     await writeConfig(
       configHome,
       `version = 1
-active_network = "solana-mainnet"
 
 [preferences]
 format = "table"
 api_url = "https://staging.corbits.dev"
 
-[networks.solana-mainnet]
+[payment]
+network = "solana-mainnet"
+
+[wallets.solana]
 address = "7xKX..."
-keyfile = "~/.config/corbits/keys/solana.key"
+kind = "keypair"
+path = "~/.config/corbits/keys/solana.key"
 `,
     );
     const mock = mockFetch(() => ({
