@@ -1,8 +1,8 @@
 import { parse, stringify } from "smol-toml";
 import os from "node:os";
 import path from "node:path";
+import { type } from "arktype";
 import { solana, evm, normalizeNetworkId } from "@faremeter/info";
-import type { OutputFormat } from "../output/format.js";
 
 export const PAYMENT_NETWORKS = [
   "devnet",
@@ -12,27 +12,38 @@ export const PAYMENT_NETWORKS = [
   "base-sepolia",
 ] as const;
 
-export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
+const OutputFormatSchema = type("'table' | 'json' | 'yaml'");
+export type OutputFormat = typeof OutputFormatSchema.infer;
+
+const _PaymentNetworkSchema = type(
+  "'devnet' | 'mainnet-beta' | 'localnet' | 'base' | 'base-sepolia'",
+);
+export type PaymentNetwork = typeof _PaymentNetworkSchema.infer;
+
 export type WalletFamily = "solana" | "evm";
 
-export type KeypairWalletConfig = {
-  address: string;
-  kind: "keypair";
-  path: string;
-};
+const KeypairWalletConfigSchema = type({
+  address: "string > 0",
+  kind: "'keypair'",
+  path: "string > 0",
+});
+export type KeypairWalletConfig = typeof KeypairWalletConfigSchema.infer;
 
-export type OwsWalletConfig = {
-  address: string;
-  kind: "ows";
-  wallet_id: string;
-};
+const OwsWalletConfigSchema = type({
+  address: "string > 0",
+  kind: "'ows'",
+  wallet_id: "string > 0",
+});
+export type OwsWalletConfig = typeof OwsWalletConfigSchema.infer;
 
-export type WalletConfig = KeypairWalletConfig | OwsWalletConfig;
+const WalletConfigSchema = KeypairWalletConfigSchema.or(OwsWalletConfigSchema);
+export type WalletConfig = typeof WalletConfigSchema.infer;
 
-export type WalletRegistry = {
-  solana?: WalletConfig;
-  evm?: WalletConfig;
-};
+const _WalletRegistrySchema = type({
+  "solana?": WalletConfigSchema,
+  "evm?": WalletConfigSchema,
+});
+export type WalletRegistry = typeof _WalletRegistrySchema.infer;
 
 export type RpcUrlOverrides = Partial<Record<PaymentNetwork, string>>;
 
@@ -263,21 +274,23 @@ function assertAllowedKeys(
 }
 
 function readOutputFormat(value: unknown): OutputFormat {
-  if (value === "table" || value === "json" || value === "yaml") {
-    return value;
+  const result = OutputFormatSchema(value);
+  if (result instanceof type.errors) {
+    throw new ConfigError(
+      'Config preferences.format must be "table", "json", or "yaml"',
+    );
   }
-
-  throw new ConfigError(
-    'Config preferences.format must be "table", "json", or "yaml"',
-  );
+  return result;
 }
 
+const VersionSchema = type("1");
+
 function readVersion(value: unknown): 1 {
-  if (value !== 1) {
+  const result = VersionSchema(value);
+  if (result instanceof type.errors) {
     throw new ConfigError("Config version must be 1");
   }
-
-  return 1;
+  return result;
 }
 
 function validateAbsoluteUrl(value: string, field: string): string {
@@ -365,50 +378,12 @@ function parseWalletConfig(
     return undefined;
   }
 
-  const context = `wallets.${family}`;
-  const wallet = readRecord(value, `Config ${context} must be a table`);
-  assertAllowedKeys(wallet, ["address", "kind", "path", "wallet_id"], context);
-
-  const address = requireConfigString(
-    wallet.address,
-    `Config ${context}.address must be a non-empty string`,
-  );
-
-  if (wallet.kind === "keypair") {
-    if (wallet.wallet_id != null) {
-      throw new ConfigError(
-        `Config ${context}.wallet_id is not allowed when kind is "keypair"`,
-      );
-    }
-
-    return {
-      address,
-      kind: "keypair",
-      path: requireConfigString(
-        wallet.path,
-        `Config ${context}.path must be non-empty when kind is "keypair"`,
-      ),
-    };
+  const result = WalletConfigSchema(value);
+  if (result instanceof type.errors) {
+    throw new ConfigError(`Config wallets.${family}: ${result.summary}`);
   }
 
-  if (wallet.kind === "ows") {
-    if (wallet.path != null) {
-      throw new ConfigError(
-        `Config ${context}.path is not allowed when kind is "ows"`,
-      );
-    }
-
-    return {
-      address,
-      kind: "ows",
-      wallet_id: requireConfigString(
-        wallet.wallet_id,
-        `Config ${context}.wallet_id must be non-empty when kind is "ows"`,
-      ),
-    };
-  }
-
-  throw new ConfigError(`Config ${context}.kind must be "keypair" or "ows"`);
+  return result;
 }
 
 function normalizeWalletConfig(wallet: WalletConfig): WalletConfig {
