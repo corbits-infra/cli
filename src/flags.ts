@@ -4,6 +4,11 @@ import type { OutputFormat } from "./output/format.js";
 
 const FORMAT_VALUES = new Set(["table", "json", "yaml"]);
 
+export function isNoDnaEnabled(): boolean {
+  const value = process.env.NO_DNA;
+  return value != null && value !== "" && value !== "0" && value !== "false";
+}
+
 export const formatType = {
   async from(s: string): Promise<OutputFormat> {
     if (!FORMAT_VALUES.has(s)) {
@@ -32,7 +37,7 @@ export async function resolveOutputFormat(
     return format;
   }
 
-  if (process.env.NO_DNA) {
+  if (isNoDnaEnabled()) {
     return "json";
   }
 

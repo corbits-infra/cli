@@ -22,7 +22,12 @@ import {
   saveConfig,
   updateConfig,
 } from "../config/index.js";
-import { formatFlag, formatType, resolveOutputFormat } from "../flags.js";
+import {
+  formatFlag,
+  formatType,
+  isNoDnaEnabled,
+  resolveOutputFormat,
+} from "../flags.js";
 
 type ConfigMutationArgs = {
   network: string | undefined;
@@ -46,11 +51,9 @@ function stringMutationOption(long: string, description: string) {
 }
 
 function resolveConfigMutationFormat(config?: CorbitsConfig): OutputFormat {
-  const noDna = process.env.NO_DNA;
-  if (noDna && noDna !== "0" && noDna !== "false") {
+  if (isNoDnaEnabled()) {
     return "json";
   }
-
   return config?.preferences.format ?? "table";
 }
 
