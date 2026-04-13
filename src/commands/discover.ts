@@ -18,7 +18,7 @@ export const discover = command({
     format: formatFlag,
   },
   handler: async ({ query, tag, format: formatArg }) => {
-    const format = resolveOutputFormat(formatArg);
+    const format = await resolveOutputFormat(formatArg);
     let proxies: Proxy[];
     let endpoints: SearchEndpoint[] = [];
 
