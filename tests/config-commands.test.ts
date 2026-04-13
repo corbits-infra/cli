@@ -14,7 +14,7 @@ async function seedConfig(options?: {
   includeEvmWallet?: boolean;
 }): Promise<void> {
   await configInit.handler({
-    network: "solana-mainnet",
+    network: "mainnet-beta",
     rpcUrl: undefined,
     solanaAddress: "7xKX...",
     solanaPath: "~/.config/corbits/keys/solana.json",
@@ -50,7 +50,7 @@ await t.test("config commands", async (t) => {
 
       const output = await captureStdout(() =>
         configInit.handler({
-          network: "solana-mainnet",
+          network: "mainnet-beta",
           rpcUrl: undefined,
           solanaAddress: "7xKX...",
           solanaPath: "~/.config/corbits/keys/solana.json",
@@ -71,7 +71,7 @@ await t.test("config commands", async (t) => {
 
       const written = await readTempConfigFile(configHome);
       t.match(written, /\[payment\]/);
-      t.match(written, /network = "solana-mainnet"/);
+      t.match(written, /network = "mainnet-beta"/);
       t.notMatch(written, /asset =/);
       t.notMatch(written, /rpc_url =/);
       t.match(written, /\[wallets\.solana\]/);
@@ -113,10 +113,10 @@ await t.test("config commands", async (t) => {
 
       const output = await captureStdout(() =>
         configInit.handler({
-          network: "solana-devnet",
+          network: "devnet",
           rpcUrl: undefined,
           solanaAddress: "8yZZ...",
-          solanaPath: "~/.config/corbits/keys/solana-devnet.json",
+          solanaPath: "~/.config/corbits/keys/devnet.json",
           solanaOws: undefined,
           evmAddress: undefined,
           evmPath: undefined,
@@ -129,7 +129,7 @@ await t.test("config commands", async (t) => {
 
       t.match(output, /already initialized/);
       t.match(output, /payment_network/);
-      t.match(output, /solana-mainnet/);
+      t.match(output, /mainnet-beta/);
       t.end();
     });
 
@@ -139,7 +139,7 @@ await t.test("config commands", async (t) => {
       await t.rejects(
         () =>
           configInit.handler({
-            network: "solana-mainnet",
+            network: "mainnet-beta",
             rpcUrl: undefined,
             solanaAddress: "7xKX...",
             solanaPath: "~/.config/corbits/keys/solana.json",
@@ -164,7 +164,7 @@ await t.test("config commands", async (t) => {
         await t.rejects(
           () =>
             configInit.handler({
-              network: "solana-mainnet",
+              network: "mainnet-beta",
               rpcUrl: undefined,
               solanaAddress: undefined,
               solanaPath: "~/.config/corbits/keys/solana.json",
@@ -190,7 +190,7 @@ await t.test("config commands", async (t) => {
         await t.rejects(
           () =>
             configInit.handler({
-              network: "solana-devnet",
+              network: "devnet",
               rpcUrl: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
@@ -202,7 +202,7 @@ await t.test("config commands", async (t) => {
               apiUrl: undefined,
               config: undefined,
             }),
-          /requires --solana-address <addr> plus one of --solana-path <path> or --solana-ows <wallet-id> when --network solana-devnet is selected/,
+          /requires --solana-address <addr> plus one of --solana-path <path> or --solana-ows <wallet-id> when --network devnet is selected/,
         );
         t.end();
       },
@@ -244,7 +244,7 @@ await t.test("config commands", async (t) => {
 
         const output = await captureStdout(() =>
           configSet.handler({
-            network: "base-mainnet",
+            network: "base",
             rpcUrl: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
@@ -265,7 +265,7 @@ await t.test("config commands", async (t) => {
         t.match(output, /https:\/\/mainnet\.base\.org/);
 
         const written = await readTempConfigFile(configHome);
-        t.match(written, /network = "base-mainnet"/);
+        t.match(written, /network = "base"/);
         t.notMatch(written, /payment_address/);
         t.notMatch(written, /rpc_url =/);
         t.end();
@@ -281,7 +281,7 @@ await t.test("config commands", async (t) => {
         await captureStdout(() =>
           configSet.handler({
             network: undefined,
-            rpcUrl: "https://solana-mainnet.example",
+            rpcUrl: "https://mainnet-beta.example",
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -296,8 +296,8 @@ await t.test("config commands", async (t) => {
 
         await captureStdout(() =>
           configSet.handler({
-            network: "base-mainnet",
-            rpcUrl: "https://base-mainnet.example",
+            network: "base",
+            rpcUrl: "https://base.example",
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -314,9 +314,9 @@ await t.test("config commands", async (t) => {
         t.match(written, /\[payment\.rpc_url_overrides\]/);
         t.match(
           written,
-          /solana-mainnet = "https:\/\/solana-mainnet\.example"/,
+          /mainnet-beta = "https:\/\/mainnet-beta\.example"/,
         );
-        t.match(written, /base-mainnet = "https:\/\/base-mainnet\.example"/);
+        t.match(written, /base = "https:\/\/base\.example"/);
 
         const output = await captureStdout(() =>
           configShow.handler({ format: "json", config: undefined }),
@@ -332,12 +332,12 @@ await t.test("config commands", async (t) => {
           };
         };
         t.same(parsed.payment, {
-          network: "base-mainnet",
+          network: "base",
           family: "evm",
           address: "0x1234",
           asset: "USDC",
-          rpc_url: "https://base-mainnet.example",
-          rpc_url_override: "https://base-mainnet.example",
+          rpc_url: "https://base.example",
+          rpc_url_override: "https://base.example",
         });
         t.end();
       },
@@ -429,7 +429,7 @@ await t.test("config commands", async (t) => {
 
         const output = await captureStdout(() =>
           configSet.handler({
-            network: "base-mainnet",
+            network: "base",
             rpcUrl: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
@@ -446,7 +446,7 @@ await t.test("config commands", async (t) => {
         t.same(JSON.parse(output), {
           status: "ok",
           action: "set",
-          payment_network: "base-mainnet",
+          payment_network: "base",
           format: "yaml",
           api_url: "https://staging.corbits.dev",
           payment_address: "0x1234",
@@ -515,7 +515,7 @@ await t.test("config commands", async (t) => {
         await t.rejects(
           () =>
             configSet.handler({
-              network: "base-mainnet",
+              network: "base",
               rpcUrl: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
@@ -600,7 +600,7 @@ await t.test("config commands", async (t) => {
         const textOutput = await captureStdout(() =>
           configShow.handler({ format: undefined, config: undefined }),
         );
-        t.match(textOutput, /Payment network: solana-mainnet/);
+        t.match(textOutput, /Payment network: mainnet-beta/);
         t.match(textOutput, /Payment address: 7xKX\.\.\./);
         t.match(
           textOutput,
@@ -616,7 +616,7 @@ await t.test("config commands", async (t) => {
           active_wallet: { expanded_path?: string; address: string };
           path: string;
         };
-        t.equal(parsed.payment.network, "solana-mainnet");
+        t.equal(parsed.payment.network, "mainnet-beta");
         t.equal(parsed.payment.address, "7xKX...");
         t.equal(parsed.payment.rpc_url, "https://api.mainnet-beta.solana.com");
         t.equal(parsed.path, getConfigPath());

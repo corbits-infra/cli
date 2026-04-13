@@ -22,34 +22,34 @@ format = "table"
 api_url = "https://api.corbits.dev"
 
 [payment]
-network = "solana-devnet"
+network = "devnet"
 
 [payment.rpc_url_overrides]
-solana-devnet = "https://rpc.devnet.example"
+devnet = "https://rpc.devnet.example"
 
 [wallets.solana]
 address = "7xKX..."
 kind = "keypair"
-path = "~/.config/corbits/keys/solana-devnet.json"
+path = "~/.config/corbits/keys/devnet.json"
 `;
 
 await t.test("config parsing and resolution", async (t) => {
   await t.test("exposes canonical network metadata", async (t) => {
     t.same(listPaymentNetworks(), [
-      "solana-devnet",
-      "solana-mainnet",
-      "solana-localnet",
+      "devnet",
+      "mainnet-beta",
+      "localnet",
       "base-sepolia",
-      "base-mainnet",
+      "base",
     ]);
     t.equal(
       formatSupportedPaymentNetworks(),
-      "solana-devnet, solana-mainnet, solana-localnet, base-sepolia, base-mainnet",
+      "devnet, mainnet-beta, localnet, base-sepolia, base",
     );
-    t.equal(isPaymentNetwork("solana-devnet"), true);
+    t.equal(isPaymentNetwork("devnet"), true);
     t.equal(isPaymentNetwork("polygon-mainnet"), false);
     t.equal(getWalletFamilyForNetwork("base-sepolia"), "evm");
-    t.same(getPaymentNetworkDefaults("solana-mainnet"), {
+    t.same(getPaymentNetworkDefaults("mainnet-beta"), {
       asset: "USDC",
       rpcUrl: "https://api.mainnet-beta.solana.com",
     });
@@ -62,21 +62,21 @@ await t.test("config parsing and resolution", async (t) => {
       const parsed = parseConfig(sample);
       const resolved = resolveConfig(parsed);
 
-      t.equal(parsed.payment.network, "solana-devnet");
+      t.equal(parsed.payment.network, "devnet");
       t.equal(parsed.wallets.solana?.address, "7xKX...");
       t.equal(resolved.payment.family, "solana");
       t.same(resolved.activeWallet, {
         address: "7xKX...",
         family: "solana",
         kind: "keypair",
-        path: "~/.config/corbits/keys/solana-devnet.json",
+        path: "~/.config/corbits/keys/devnet.json",
         expandedPath: path.join(
           os.homedir(),
-          ".config/corbits/keys/solana-devnet.json",
+          ".config/corbits/keys/devnet.json",
         ),
       });
       t.same(resolved.payment, {
-        network: "solana-devnet",
+        network: "devnet",
         family: "solana",
         address: "7xKX...",
         asset: "USDC",
@@ -84,7 +84,7 @@ await t.test("config parsing and resolution", async (t) => {
       });
       t.match(
         stringifyConfig(parsed),
-        /\[payment\]\nnetwork = "solana-devnet"/,
+        /\[payment\]\nnetwork = "devnet"/,
       );
       t.end();
     },
@@ -143,9 +143,9 @@ wallet_id = "primary-evm"
         api_url: "https://api.corbits.dev",
       },
       payment: {
-        network: "base-mainnet",
+        network: "base",
         rpc_url_overrides: {
-          "base-mainnet": "https://base-mainnet.example",
+          "base": "https://base.example",
         },
       },
       wallets: {
@@ -167,7 +167,7 @@ wallet_id = "primary-evm"
       serialized,
       /version = 1[\s\S]*\[preferences\][\s\S]*\[payment\][\s\S]*\[wallets\.solana\][\s\S]*\[wallets\.evm\]/,
     );
-    t.equal(parseConfig(serialized).payment.network, "base-mainnet");
+    t.equal(parseConfig(serialized).payment.network, "base");
     t.end();
   });
 
@@ -175,25 +175,25 @@ wallet_id = "primary-evm"
     t.throws(
       () =>
         parseConfig(`version = 1
-active_network = "solana-mainnet"
+active_network = "mainnet-beta"
 
 [preferences]
 format = "table"
 api_url = "https://api.corbits.dev"
 
 [payment]
-network = "solana-devnet"
+network = "devnet"
 
 [wallets.solana]
 address = "7xKX..."
 kind = "keypair"
-path = "~/.config/corbits/keys/solana-devnet.json"
+path = "~/.config/corbits/keys/devnet.json"
 `),
       /Unknown config key "active_network"/,
     );
 
     t.throws(
-      () => parseConfig(sample.replace('"solana-devnet"', '"polygon-mainnet"')),
+      () => parseConfig(sample.replace('"devnet"', '"polygon-mainnet"')),
       new RegExp(formatSupportedPaymentNetworks()),
     );
 
@@ -206,12 +206,12 @@ format = "table"
 api_url = "https://api.corbits.dev"
 
 [payment]
-network = "base-mainnet"
+network = "base"
 
 [wallets.solana]
 address = "7xKX..."
 kind = "keypair"
-path = "~/.config/corbits/keys/solana-devnet.json"
+path = "~/.config/corbits/keys/devnet.json"
 `),
       /wallets\.evm is required/,
     );
@@ -220,8 +220,8 @@ path = "~/.config/corbits/keys/solana-devnet.json"
       () =>
         parseConfig(
           sample.replace(
-            'path = "~/.config/corbits/keys/solana-devnet.json"',
-            'path = "~/.config/corbits/keys/solana-devnet.json"\nwallet_id = "nope"',
+            'path = "~/.config/corbits/keys/devnet.json"',
+            'path = "~/.config/corbits/keys/devnet.json"\nwallet_id = "nope"',
           ),
         ),
       /wallet_id is not allowed when kind is "keypair"/,
@@ -231,8 +231,8 @@ path = "~/.config/corbits/keys/solana-devnet.json"
       () =>
         parseConfig(
           sample.replace(
-            'kind = "keypair"\npath = "~/.config/corbits/keys/solana-devnet.json"',
-            'kind = "ows"\npath = "~/.config/corbits/keys/solana-devnet.json"',
+            'kind = "keypair"\npath = "~/.config/corbits/keys/devnet.json"',
+            'kind = "ows"\npath = "~/.config/corbits/keys/devnet.json"',
           ),
         ),
       /path is not allowed when kind is "ows"/,
@@ -247,8 +247,8 @@ path = "~/.config/corbits/keys/solana-devnet.json"
       () =>
         parseConfig(
           sample.replace(
-            '[payment]\nnetwork = "solana-devnet"',
-            '[payment]\nnetwork = "solana-devnet"\nrpc_url = "https://api.devnet.solana.com"',
+            '[payment]\nnetwork = "devnet"',
+            '[payment]\nnetwork = "devnet"\nrpc_url = "https://api.devnet.solana.com"',
           ),
         ),
       /Unknown payment key "rpc_url"/,
@@ -258,7 +258,7 @@ path = "~/.config/corbits/keys/solana-devnet.json"
       () =>
         parseConfig(
           sample.replace(
-            'solana-devnet = "https://rpc.devnet.example"',
+            'devnet = "https://rpc.devnet.example"',
             'polygon-mainnet = "https://polygon.example"',
           ),
         ),
@@ -269,11 +269,11 @@ path = "~/.config/corbits/keys/solana-devnet.json"
       () =>
         parseConfig(
           sample.replace(
-            'solana-devnet = "https://rpc.devnet.example"',
-            'solana-devnet = "not-a-url"',
+            'devnet = "https://rpc.devnet.example"',
+            'devnet = "not-a-url"',
           ),
         ),
-      /payment\.rpc_url_overrides\.solana-devnet/,
+      /payment\.rpc_url_overrides\.devnet/,
     );
 
     t.throws(

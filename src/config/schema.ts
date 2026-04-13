@@ -1,14 +1,15 @@
 import { parse, stringify } from "smol-toml";
 import os from "node:os";
 import path from "node:path";
+import { solana, evm, normalizeNetworkId } from "@faremeter/info";
 import type { OutputFormat } from "../output/format.js";
 
 export const PAYMENT_NETWORKS = [
-  "solana-devnet",
-  "solana-mainnet",
-  "solana-localnet",
+  "devnet",
+  "mainnet-beta",
+  "localnet",
+  "base",
   "base-sepolia",
-  "base-mainnet",
 ] as const;
 
 export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
@@ -115,36 +116,33 @@ type WalletUpdateInput = {
 export const DEFAULT_API_URL = "https://api.corbits.dev";
 const DEFAULT_OUTPUT_FORMAT: OutputFormat = "table";
 
-const PAYMENT_NETWORK_DEFAULTS: Record<
-  PaymentNetwork,
-  { family: WalletFamily; asset: string; rpcUrl: string }
-> = {
-  "solana-devnet": {
-    family: "solana",
-    asset: "USDC",
-    rpcUrl: "https://api.devnet.solana.com",
-  },
-  "solana-mainnet": {
-    family: "solana",
-    asset: "USDC",
-    rpcUrl: "https://api.mainnet-beta.solana.com",
-  },
-  "solana-localnet": {
-    family: "solana",
-    asset: "USDC",
-    rpcUrl: "http://127.0.0.1:8899",
-  },
-  "base-sepolia": {
-    family: "evm",
-    asset: "USDC",
-    rpcUrl: "https://sepolia.base.org",
-  },
-  "base-mainnet": {
-    family: "evm",
-    asset: "USDC",
-    rpcUrl: "https://mainnet.base.org",
-  },
+const DEFAULT_RPC_URLS: Record<PaymentNetwork, string> = {
+  devnet: "https://api.devnet.solana.com",
+  "mainnet-beta": "https://api.mainnet-beta.solana.com",
+  localnet: "http://127.0.0.1:8899",
+  base: "https://mainnet.base.org",
+  "base-sepolia": "https://sepolia.base.org",
 };
+
+const CAIP2_TO_NETWORK: Record<string, PaymentNetwork> = {
+  [solana.SOLANA_DEVNET.caip2]: "devnet",
+  [solana.SOLANA_MAINNET_BETA.caip2]: "mainnet-beta",
+  [evm.chainIdToCAIP2(8453)]: "base",
+  [evm.chainIdToCAIP2(84532)]: "base-sepolia",
+};
+
+function normalizeToPaymentNetwork(input: string): PaymentNetwork | null {
+  if (PAYMENT_NETWORKS.includes(input as PaymentNetwork)) {
+    return input as PaymentNetwork;
+  }
+
+  if (input === "localnet" || input === "solana-localnet") {
+    return "localnet";
+  }
+
+  const caip2 = normalizeNetworkId(input);
+  return CAIP2_TO_NETWORK[caip2] ?? null;
+}
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -170,23 +168,25 @@ export function formatSupportedPaymentNetworks(): string {
 }
 
 export function isPaymentNetwork(value: string): value is PaymentNetwork {
-  return value in PAYMENT_NETWORK_DEFAULTS;
+  return PAYMENT_NETWORKS.includes(value as PaymentNetwork);
 }
 
 export function getWalletFamilyForNetwork(
   network: PaymentNetwork,
 ): WalletFamily {
-  return PAYMENT_NETWORK_DEFAULTS[network].family;
+  if (solana.isKnownCluster(network) || network === "localnet") {
+    return "solana";
+  }
+  return "evm";
 }
 
 export function getPaymentNetworkDefaults(network: PaymentNetwork): {
   asset: string;
   rpcUrl: string;
 } {
-  const defaults = PAYMENT_NETWORK_DEFAULTS[network];
   return {
-    asset: defaults.asset,
-    rpcUrl: defaults.rpcUrl,
+    asset: "USDC",
+    rpcUrl: DEFAULT_RPC_URLS[network],
   };
 }
 
@@ -194,13 +194,14 @@ export function parsePaymentNetwork(
   value: string,
   message = "config requires --network <name>",
 ): PaymentNetwork {
-  const network = requireConfigString(value, message);
-  if (isPaymentNetwork(network)) {
+  const input = requireConfigString(value, message);
+  const network = normalizeToPaymentNetwork(input);
+  if (network != null) {
     return network;
   }
 
   throw new ConfigError(
-    `Invalid payment network "${network}". Must be one of: ${formatSupportedPaymentNetworks()}`,
+    `Invalid payment network "${input}". Must be one of: ${formatSupportedPaymentNetworks()}`,
   );
 }
 
@@ -324,10 +325,11 @@ function parseRpcUrlOverrides(value: unknown): RpcUrlOverrides | undefined {
   );
   const overrides: RpcUrlOverrides = {};
 
-  for (const [network, rpcUrl] of Object.entries(record)) {
-    if (!isPaymentNetwork(network)) {
+  for (const [key, rpcUrl] of Object.entries(record)) {
+    const network = normalizeToPaymentNetwork(key);
+    if (network == null) {
       throw new ConfigError(
-        `Config payment.rpc_url_overrides key "${network}" must be one of: ${formatSupportedPaymentNetworks()}`,
+        `Config payment.rpc_url_overrides key "${key}" must be one of: ${formatSupportedPaymentNetworks()}`,
       );
     }
 

@@ -19,9 +19,9 @@ await t.test("config storage", async (t) => {
         api_url: "https://api.corbits.dev",
       },
       payment: {
-        network: "base-mainnet",
+        network: "base",
         rpc_url_overrides: {
-          "base-mainnet": "https://base-mainnet.example",
+          "base": "https://base.example",
         },
       },
       wallets: {
@@ -43,18 +43,18 @@ await t.test("config storage", async (t) => {
     const written = await fs.readFile(configPath, "utf8");
     t.match(
       written,
-      /version = 1[\s\S]*\[preferences\][\s\S]*\[payment\]\nnetwork = "base-mainnet"[\s\S]*\[payment\.rpc_url_overrides\]\nbase-mainnet = "https:\/\/base-mainnet\.example"[\s\S]*\[wallets\.solana\]\naddress = "7xKX\.\.\."\nkind = "keypair"\npath = "~\/\.config\/corbits\/keys\/solana\.json"[\s\S]*\[wallets\.evm\]\naddress = "0x1234"\nkind = "ows"\nwallet_id = "primary-evm"/,
+      /version = 1[\s\S]*\[preferences\][\s\S]*\[payment\]\nnetwork = "base"[\s\S]*\[payment\.rpc_url_overrides\]\nbase = "https:\/\/base\.example"[\s\S]*\[wallets\.solana\]\naddress = "7xKX\.\.\."\nkind = "keypair"\npath = "~\/\.config\/corbits\/keys\/solana\.json"[\s\S]*\[wallets\.evm\]\naddress = "0x1234"\nkind = "ows"\nwallet_id = "primary-evm"/,
     );
 
     const loaded = await loadConfig();
-    t.equal(loaded?.resolved.payment.network, "base-mainnet");
+    t.equal(loaded?.resolved.payment.network, "base");
     t.same(loaded?.resolved.activeWallet, {
       address: "0x1234",
       family: "evm",
       kind: "ows",
       walletId: "primary-evm",
     });
-    t.equal(loaded?.resolved.payment.rpcUrl, "https://base-mainnet.example");
+    t.equal(loaded?.resolved.payment.rpcUrl, "https://base.example");
     t.end();
   });
 });

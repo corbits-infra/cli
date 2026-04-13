@@ -254,7 +254,7 @@ format = "yaml"
 api_url = "https://api.corbits.dev"
 
 [payment]
-network = "solana-mainnet"
+network = "mainnet-beta"
 
 [wallets.solana]
 address = "7xKX..."
@@ -294,7 +294,7 @@ format = "table"
 api_url = "https://staging.corbits.dev"
 
 [payment]
-network = "solana-mainnet"
+network = "mainnet-beta"
 
 [wallets.solana]
 address = "7xKX..."

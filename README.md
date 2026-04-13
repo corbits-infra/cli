@@ -57,9 +57,9 @@ or `$XDG_CONFIG_HOME/corbits/config.toml`.
 ```
 corbits config show
 corbits config show --format json
-corbits config init --network solana-mainnet --solana-address 7xKX... --solana-path ~/.config/corbits/keys/solana.key --rpc-url https://my.solana.rpc
+corbits config init --network mainnet-beta --solana-address 7xKX... --solana-path ~/.config/corbits/keys/solana.key --rpc-url https://my.solana.rpc
 corbits config set --evm-address 0x1234 --evm-ows primary-evm
-corbits config set --network base-mainnet
+corbits config set --network base
 corbits config set --rpc-url https://mainnet.base.org
 corbits config set --format yaml --api-url https://staging.corbits.dev
 ```
