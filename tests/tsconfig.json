@@ -4,6 +4,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["*.ts"],
+  "include": ["*.test.ts", "test-helpers.ts"],
   "references": [{ "path": ".." }]
 }

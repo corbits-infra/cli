@@ -9,25 +9,27 @@ import {
   captureStdout,
   readTempConfigFile,
   withTempConfigHome,
-  writeConfig,
-} from "./helpers.js";
+} from "./test-helpers.js";
+import { writeConfig } from "./test-helpers.js";
 
 async function seedConfig(options?: {
   includeEvmWallet?: boolean;
 }): Promise<void> {
-  await configInit.handler({
-    network: "mainnet-beta",
-    rpcUrl: undefined,
-    solanaAddress: "7xKX...",
-    solanaPath: "~/.config/corbits/keys/solana.json",
-    solanaOws: undefined,
-    evmAddress: options?.includeEvmWallet === false ? undefined : "0x1234",
-    evmPath: undefined,
-    evmOws: options?.includeEvmWallet === false ? undefined : "primary-evm",
-    format: "table",
-    apiUrl: "https://api.corbits.dev",
-    config: undefined,
-  });
+  await captureStdout(() =>
+    configInit.handler({
+      network: "mainnet-beta",
+      rpcUrl: undefined,
+      solanaAddress: "7xKX...",
+      solanaPath: "~/.config/corbits/keys/solana.json",
+      solanaOws: undefined,
+      evmAddress: options?.includeEvmWallet === false ? undefined : "0x1234",
+      evmPath: undefined,
+      evmOws: options?.includeEvmWallet === false ? undefined : "primary-evm",
+      format: "table",
+      apiUrl: "https://api.corbits.dev",
+      config: undefined,
+    }),
+  );
 }
 
 await t.test("config commands", async (t) => {
@@ -134,6 +136,38 @@ await t.test("config commands", async (t) => {
       t.match(output, /mainnet-beta/);
       t.end();
     });
+
+    await t.test(
+      "respects an explicit format flag when init is a no-op",
+      async (t) => {
+        withTempConfigHome(t);
+        await seedConfig();
+
+        const output = await captureStdout(() =>
+          configInit.handler({
+            network: "devnet",
+            rpcUrl: undefined,
+            solanaAddress: "8yZZ...",
+            solanaPath: "~/.config/corbits/keys/devnet.json",
+            solanaOws: undefined,
+            evmAddress: undefined,
+            evmPath: undefined,
+            evmOws: undefined,
+            format: "json",
+            apiUrl: undefined,
+            config: undefined,
+          }),
+        );
+
+        t.same(JSON.parse(output), {
+          status: "noop",
+          action: "init",
+          path: getConfigPath(),
+          payment_network: "mainnet-beta",
+        });
+        t.end();
+      },
+    );
 
     await t.test("rejects conflicting wallet source flags", async (t) => {
       withTempConfigHome(t);
@@ -467,23 +501,28 @@ await t.test("config commands", async (t) => {
       async (t) => {
         withTempConfigHome(t);
 
-        await t.rejects(
-          () =>
-            configSet.handler({
-              network: "base",
-              rpcUrl: undefined,
-              solanaAddress: undefined,
-              solanaPath: undefined,
-              solanaOws: undefined,
-              evmAddress: undefined,
-              evmPath: undefined,
-              evmOws: undefined,
-              format: undefined,
-              apiUrl: undefined,
-              config: undefined,
-            }),
+        const error = await t.rejects(() =>
+          configSet.handler({
+            network: "base",
+            rpcUrl: undefined,
+            solanaAddress: undefined,
+            solanaPath: undefined,
+            solanaOws: undefined,
+            evmAddress: undefined,
+            evmPath: undefined,
+            evmOws: undefined,
+            format: undefined,
+            apiUrl: undefined,
+            config: undefined,
+          }),
+        );
+
+        t.match(
+          String(error),
           /config set.*cannot update.*First run `corbits config init .*then rerun your `corbits config set/m,
         );
+        t.match(String(error), /--solana-ows <wallet-id>/);
+        t.match(String(error), /--evm-ows/);
         t.end();
       },
     );
@@ -611,6 +650,8 @@ await t.test("config commands", async (t) => {
         t.match(output, /config: not initialized/);
         t.match(output, /--network <name>/);
         t.match(output, /--solana-address <addr>/);
+        t.match(output, /--solana-ows <wallet-id>/);
+        t.match(output, /--evm-ows/);
         t.match(output, /rpc-url <url>/);
         t.end();
       },

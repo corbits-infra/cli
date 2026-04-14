@@ -57,18 +57,35 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
   return Promise.resolve(captured);
 }
 
-function hasTeardown(
-  test: unknown,
-): test is { teardown(fn: () => void | Promise<void>): void } {
-  return (
-    typeof test === "object" &&
-    test !== null &&
-    "teardown" in test &&
-    typeof test.teardown === "function"
-  );
+export function captureStderr(fn: () => void | Promise<void>): Promise<string> {
+  const original = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  process.stderr.write = ((chunk: string) => {
+    captured += chunk;
+    return true;
+  }) as typeof process.stderr.write;
+  const result = fn();
+  if (result instanceof Promise) {
+    return result.then(
+      () => {
+        process.stderr.write = original;
+        return captured;
+      },
+      (err: unknown) => {
+        process.stderr.write = original;
+        throw err;
+      },
+    );
+  }
+  process.stderr.write = original;
+  return Promise.resolve(captured);
 }
 
-export function withTempConfigHome(test: unknown): string {
+export function withTempConfigHome(test: {
+  teardown(fn: () => Promise<void>): void;
+}): string {
+  const priorConfigHome = process.env.XDG_CONFIG_HOME;
+  const priorNoDna = process.env.NO_DNA;
   const dir = path.join(
     os.tmpdir(),
     `corbits-config-${process.pid}-${Date.now().toString(36)}-${Math.random()
@@ -76,14 +93,18 @@ export function withTempConfigHome(test: unknown): string {
       .slice(2)}`,
   );
 
-  if (!hasTeardown(test)) {
-    throw new Error("withTempConfigHome requires a tap test context");
-  }
-
   process.env.XDG_CONFIG_HOME = dir;
   test.teardown(async () => {
-    delete process.env.XDG_CONFIG_HOME;
-    delete process.env.NO_DNA;
+    if (priorConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = priorConfigHome;
+    }
+    if (priorNoDna === undefined) {
+      delete process.env.NO_DNA;
+    } else {
+      process.env.NO_DNA = priorNoDna;
+    }
     await fs.rm(dir, { recursive: true, force: true });
   });
 

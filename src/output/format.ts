@@ -7,6 +7,10 @@ export function writeLine(s: string): void {
   process.stdout.write(s + "\n");
 }
 
+export function writeStderrLine(s: string): void {
+  process.stderr.write(s + "\n");
+}
+
 export function printJson(data: unknown): void {
   writeLine(JSON.stringify(data, null, 2));
 }
@@ -31,6 +35,18 @@ export function printTable(head: string[], rows: string[][]): void {
 
 export function formatPrice(microUsdc: number): string {
   return `$${(microUsdc / 1_000_000).toFixed(6)}`;
+}
+
+export function tryParseJson(text: string): unknown {
+  if (text.trim().length === 0) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 export function printFormatted<T>(

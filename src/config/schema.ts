@@ -1,12 +1,13 @@
-import { parse, stringify } from "smol-toml";
-import os from "node:os";
-import path from "node:path";
-import { type } from "arktype";
 import {
   normalizeNetworkId,
   solana,
   translateNetworkToLegacy,
 } from "@faremeter/info";
+import { parse, stringify } from "smol-toml";
+
+import os from "node:os";
+import path from "node:path";
+import { type } from "arktype";
 
 // CLI-supported payment networks (single source of truth)
 const PAYMENT_NETWORKS = [
@@ -75,6 +76,7 @@ const ConfigFileSchema = type({
   payment: PaymentSectionSchema,
   wallets: WalletsSectionSchema,
 });
+type ConfigFile = typeof ConfigFileSchema.infer;
 
 export type WalletRegistry = {
   solana?: WalletConfig;
@@ -323,7 +325,7 @@ function parseWalletConfig(
   if (result instanceof type.errors) {
     throw new ConfigError(formatWalletError(result, family));
   }
-  return result;
+  return result as WalletConfig;
 }
 
 function formatWalletError(
@@ -609,7 +611,7 @@ export function parseConfig(text: string): CorbitsConfig {
   if (result instanceof type.errors) {
     throw new ConfigError(formatConfigError(result));
   }
-  const config = result;
+  const config = result as ConfigFile;
   const network = parsePaymentNetwork(
     typeof config.payment.network === "string" ? config.payment.network : "",
     `Config payment.network must be one of: ${formatSupportedPaymentNetworks()}`,

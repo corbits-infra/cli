@@ -38,7 +38,10 @@ async function request<T extends Type<any>>(
   path: string,
   baseUrl?: string,
 ): Promise<T["infer"]> {
-  const resolvedBaseUrl = baseUrl ?? (await resolveApiBaseUrl());
+  const resolvedBaseUrl = (baseUrl ?? (await resolveApiBaseUrl())).replace(
+    /\/+$/,
+    "",
+  );
   const url = `${resolvedBaseUrl}${path}`;
   const res = await fetch(url);
 

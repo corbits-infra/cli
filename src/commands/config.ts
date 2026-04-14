@@ -24,12 +24,7 @@ import {
   saveConfig,
   updateConfig,
 } from "../config/index.js";
-import {
-  formatFlag,
-  formatType,
-  isNoDnaEnabled,
-  resolveOutputFormat,
-} from "../flags.js";
+import { formatFlag, formatType, resolveOutputFormat } from "../flags.js";
 
 type ConfigMutationArgs = {
   network: string | undefined;
@@ -50,13 +45,6 @@ function stringMutationOption(long: string, description: string) {
     long,
     description,
   });
-}
-
-function resolveConfigMutationFormat(config?: CorbitsConfig): OutputFormat {
-  if (isNoDnaEnabled()) {
-    return "json";
-  }
-  return config?.preferences.format ?? "table";
 }
 
 function printConfigMutationResult(
@@ -91,12 +79,8 @@ async function saveConfigAndPrintMutationResult(
   payload: unknown,
 ): Promise<void> {
   await saveConfig(path, config);
-  printConfigMutationResult(
-    resolveConfigMutationFormat(config),
-    summary,
-    rows,
-    payload,
-  );
+  const format = await resolveOutputFormat(undefined, path);
+  printConfigMutationResult(format, summary, rows, payload);
 }
 
 const configMutationArgs = {
@@ -281,8 +265,9 @@ export const configInit = command({
     const configPath = getConfigPath(args.config);
     const existing = await loadConfig(args.config);
     if (existing != null) {
+      const format = await resolveOutputFormat(args.format, args.config);
       printConfigMutationResult(
-        resolveConfigMutationFormat(existing.config),
+        format,
         "config: already initialized (no-op)",
         [
           ["path", existing.path],

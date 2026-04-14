@@ -154,7 +154,7 @@ export function printMissingConfig(path: string, format: OutputFormat): void {
   const payload = {
     initialized: false,
     path,
-    help: "Run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or the matching EVM flags, plus optional `--rpc-url <url>`",
+    help: "Run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or `corbits config init --network <name> --solana-address <addr> --solana-ows <wallet-id>` (with the matching EVM `--evm-path` / `--evm-ows` flags for EVM networks), plus optional `--rpc-url <url>`",
   };
 
   if (format === "json") {

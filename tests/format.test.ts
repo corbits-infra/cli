@@ -8,7 +8,7 @@ import {
   printYaml,
   printTable,
 } from "../src/output/format.js";
-import { captureStdout } from "./helpers.js";
+import { captureStdout } from "./test-helpers.js";
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;

@@ -2,6 +2,7 @@
 
 import { createRequire } from "node:module";
 import { subcommands, run } from "cmd-ts";
+import { call } from "./commands/call.js";
 import { config } from "./commands/config.js";
 import { discover } from "./commands/discover.js";
 import { inspect } from "./commands/inspect.js";
@@ -15,7 +16,7 @@ const app = subcommands({
   name: "corbits",
   version: pkg.version,
   description: "Browse, filter, and test x402-gated services",
-  cmds: { discover, inspect, config },
+  cmds: { discover, inspect, config, call },
 });
 
 run(app, process.argv.slice(2)).catch((err: unknown) => {

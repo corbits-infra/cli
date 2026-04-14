@@ -5,7 +5,7 @@ import path from "node:path";
 import t from "tap";
 import { type CorbitsConfig } from "../src/config/schema.js";
 import { loadConfig, saveConfig } from "../src/config/store.js";
-import { withTempConfigHome } from "./helpers.js";
+import { withTempConfigHome } from "./test-helpers.js";
 
 await t.test("config storage", async (t) => {
   await t.test("saves atomically with canonical serialization", async (t) => {
