@@ -5,7 +5,11 @@ import {
   printYaml,
   writeLine,
 } from "../output/format.js";
-import type { WalletConfig } from "./schema.js";
+import {
+  formatPaymentNetworkDisplay,
+  type PaymentNetwork,
+  type WalletConfig,
+} from "./schema.js";
 import type { LoadedConfig } from "./store.js";
 
 type ConfigView = {
@@ -108,7 +112,11 @@ export function printConfigView(
   }
 
   writeLine(`Config path: ${view.path}`);
-  writeLine(`Payment network: ${view.payment.network}`);
+  writeLine(
+    `Payment network: ${formatPaymentNetworkDisplay(
+      view.payment.network as PaymentNetwork,
+    )}`,
+  );
   writeLine(`Payment family: ${view.payment.family}`);
   writeLine(`Default format: ${view.preferences.format}`);
   writeLine(`API URL: ${view.preferences.api_url}`);

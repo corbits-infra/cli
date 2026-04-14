@@ -59,7 +59,7 @@ export async function loadRequiredConfig(
   const loaded = await loadConfig(configPath);
   if (loaded == null) {
     throw new ConfigError(
-      "Config is not initialized. Run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or the matching EVM flags, plus optional `--rpc-url <url>`",
+      "Config is not initialized, so `corbits config set` cannot update it yet. First run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` (or the matching EVM flags, plus optional `--rpc-url <url>`) to create the config, then rerun your `corbits config set ...` command.",
     );
   }
 

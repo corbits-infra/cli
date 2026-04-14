@@ -39,12 +39,12 @@ await t.test("config parsing and resolution", async (t) => {
       "devnet",
       "mainnet-beta",
       "localnet",
-      "base-sepolia",
       "base",
+      "base-sepolia",
     ]);
     t.equal(
       formatSupportedPaymentNetworks(),
-      "devnet, mainnet-beta, localnet, base-sepolia, base",
+      "solana-devnet, solana-mainnet-beta, solana-localnet, base, base-sepolia",
     );
     t.equal(isPaymentNetwork("devnet"), true);
     t.equal(isPaymentNetwork("polygon-mainnet"), false);
@@ -82,10 +82,7 @@ await t.test("config parsing and resolution", async (t) => {
         asset: "USDC",
         rpcUrl: "https://rpc.devnet.example",
       });
-      t.match(
-        stringifyConfig(parsed),
-        /\[payment\]\nnetwork = "devnet"/,
-      );
+      t.match(stringifyConfig(parsed), /\[payment\]\nnetwork = "devnet"/);
       t.end();
     },
   );
@@ -135,6 +132,36 @@ wallet_id = "primary-evm"
     },
   );
 
+  await t.test(
+    "accepts CAIP-2 network identifiers and normalizes them to CLI names",
+    async (t) => {
+      const parsed = parseConfig(`version = 1
+
+[preferences]
+format = "json"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "eip155:84532"
+
+[payment.rpc_url_overrides]
+"eip155:84532" = "https://base-sepolia.example"
+
+[wallets.evm]
+address = "0x1234"
+kind = "ows"
+wallet_id = "primary-evm"
+`);
+
+      t.equal(parsed.payment.network, "base-sepolia");
+      t.same(parsed.payment.rpc_url_overrides, {
+        "base-sepolia": "https://base-sepolia.example",
+      });
+      t.equal(resolveConfig(parsed).payment.family, "evm");
+      t.end();
+    },
+  );
+
   await t.test("normalizes field order deterministically", async (t) => {
     const config: CorbitsConfig = {
       version: 1,
@@ -145,7 +172,7 @@ wallet_id = "primary-evm"
       payment: {
         network: "base",
         rpc_url_overrides: {
-          "base": "https://base.example",
+          base: "https://base.example",
         },
       },
       wallets: {
@@ -235,12 +262,12 @@ path = "~/.config/corbits/keys/devnet.json"
             'kind = "ows"\npath = "~/.config/corbits/keys/devnet.json"',
           ),
         ),
-      /path is not allowed when kind is "ows"/,
+      /path must be removed/,
     );
 
     t.throws(
       () => parseConfig(sample.replace('address = "7xKX..."', 'address = ""')),
-      /wallets\.solana\.address/,
+      /address must be non-empty/,
     );
 
     t.throws(

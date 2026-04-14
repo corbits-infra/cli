@@ -21,7 +21,7 @@ await t.test("config storage", async (t) => {
       payment: {
         network: "base",
         rpc_url_overrides: {
-          "base": "https://base.example",
+          base: "https://base.example",
         },
       },
       wallets: {

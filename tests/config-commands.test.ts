@@ -1,5 +1,6 @@
 #!/usr/bin/env pnpm tsx
 
+import fs from "node:fs/promises";
 import t from "tap";
 import * as configCommands from "../src/commands/config.js";
 import { configInit, configSet, configShow } from "../src/commands/config.js";
@@ -8,6 +9,7 @@ import {
   captureStdout,
   readTempConfigFile,
   withTempConfigHome,
+  writeConfig,
 } from "./helpers.js";
 
 async function seedConfig(options?: {
@@ -312,10 +314,7 @@ await t.test("config commands", async (t) => {
 
         const written = await readTempConfigFile(configHome);
         t.match(written, /\[payment\.rpc_url_overrides\]/);
-        t.match(
-          written,
-          /mainnet-beta = "https:\/\/mainnet-beta\.example"/,
-        );
+        t.match(written, /mainnet-beta = "https:\/\/mainnet-beta\.example"/);
         t.match(written, /base = "https:\/\/base\.example"/);
 
         const output = await captureStdout(() =>
@@ -463,6 +462,32 @@ await t.test("config commands", async (t) => {
   });
 
   await t.test("set failure paths", async (t) => {
+    await t.test(
+      "explains how to proceed when config set runs before init",
+      async (t) => {
+        withTempConfigHome(t);
+
+        await t.rejects(
+          () =>
+            configSet.handler({
+              network: "base",
+              rpcUrl: undefined,
+              solanaAddress: undefined,
+              solanaPath: undefined,
+              solanaOws: undefined,
+              evmAddress: undefined,
+              evmPath: undefined,
+              evmOws: undefined,
+              format: undefined,
+              apiUrl: undefined,
+              config: undefined,
+            }),
+          /config set.*cannot update.*First run `corbits config init .*then rerun your `corbits config set/m,
+        );
+        t.end();
+      },
+    );
+
     await t.test("rejects empty config set invocations", async (t) => {
       withTempConfigHome(t);
       await seedConfig();
@@ -600,7 +625,7 @@ await t.test("config commands", async (t) => {
         const textOutput = await captureStdout(() =>
           configShow.handler({ format: undefined, config: undefined }),
         );
-        t.match(textOutput, /Payment network: mainnet-beta/);
+        t.match(textOutput, /Payment network: solana-mainnet-beta/);
         t.match(textOutput, /Payment address: 7xKX\.\.\./);
         t.match(
           textOutput,
@@ -625,6 +650,46 @@ await t.test("config commands", async (t) => {
           parsed.active_wallet.expanded_path ?? "",
           /\/\.config\/corbits\/keys\/solana\.json$/,
         );
+        t.end();
+      },
+    );
+
+    await t.test(
+      "uses the requested config file to resolve the default format",
+      async (t) => {
+        const configHome = withTempConfigHome(t);
+        await writeConfig(configHome, "not toml");
+
+        const customPath = `${configHome}/custom-config.toml`;
+        await fs.writeFile(
+          customPath,
+          `version = 1
+
+[preferences]
+format = "json"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "devnet"
+
+[wallets.solana]
+address = "7xKX..."
+kind = "keypair"
+path = "~/.config/corbits/keys/devnet.json"
+`,
+          { mode: 0o600 },
+        );
+        await t.resolves(async () => {
+          const output = await captureStdout(() =>
+            configShow.handler({ format: undefined, config: customPath }),
+          );
+          const parsed = JSON.parse(output) as {
+            payment: { network: string };
+            path: string;
+          };
+          t.equal(parsed.payment.network, "devnet");
+          t.equal(parsed.path, customPath);
+        });
         t.end();
       },
     );

@@ -11,8 +11,10 @@ import {
   type ConfigUpdateInput,
   type CorbitsConfig,
   buildInitialConfig,
+  formatPaymentNetworkDisplay,
   getConfigPath,
   getWalletFamilyForNetwork,
+  isPaymentNetwork,
   loadConfig,
   loadRequiredConfig,
   parsePaymentNetwork,
@@ -125,6 +127,9 @@ function formatMutationValue(value: unknown): string {
     return "";
   }
   if (typeof value === "string") {
+    if (isPaymentNetwork(value)) {
+      return formatPaymentNetworkDisplay(value);
+    }
     return value;
   }
   return JSON.stringify(value);
@@ -254,7 +259,7 @@ export const configShow = command({
     config: configPathFlag,
   },
   handler: async ({ format: formatArg, config: configPath }) => {
-    const format = await resolveOutputFormat(formatArg);
+    const format = await resolveOutputFormat(formatArg, configPath);
     const loaded = await loadConfig(configPath);
     if (loaded == null) {
       printMissingConfig(getConfigPath(configPath), format);

@@ -17,6 +17,7 @@ export {
   buildInitialConfig,
   buildKeypairWalletConfig,
   buildOwsWalletConfig,
+  formatPaymentNetworkDisplay,
   formatSupportedPaymentNetworks,
   getWalletFamilyForNetwork,
   isPaymentNetwork,

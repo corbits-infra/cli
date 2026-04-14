@@ -57,15 +57,28 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
   return Promise.resolve(captured);
 }
 
-export function withTempConfigHome(test: {
-  teardown(fn: () => Promise<void>): void;
-}): string {
+function hasTeardown(
+  test: unknown,
+): test is { teardown(fn: () => void | Promise<void>): void } {
+  return (
+    typeof test === "object" &&
+    test !== null &&
+    "teardown" in test &&
+    typeof test.teardown === "function"
+  );
+}
+
+export function withTempConfigHome(test: unknown): string {
   const dir = path.join(
     os.tmpdir(),
     `corbits-config-${process.pid}-${Date.now().toString(36)}-${Math.random()
       .toString(36)
       .slice(2)}`,
   );
+
+  if (!hasTeardown(test)) {
+    throw new Error("withTempConfigHome requires a tap test context");
+  }
 
   process.env.XDG_CONFIG_HOME = dir;
   test.teardown(async () => {
@@ -82,7 +95,9 @@ export async function writeConfig(
   body: string,
 ): Promise<void> {
   await fs.mkdir(path.join(configHome, "corbits"), { recursive: true });
-  await fs.writeFile(path.join(configHome, "corbits", "config.toml"), body);
+  await fs.writeFile(path.join(configHome, "corbits", "config.toml"), body, {
+    mode: 0o600,
+  });
 }
 
 export async function readTempConfigFile(configHome: string): Promise<string> {

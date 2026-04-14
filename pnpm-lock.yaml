@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@faremeter/info':
+        specifier: 0.19.0
+        version: 0.19.0
       arktype:
         specifier: ^2.2.0
         version: 2.2.0
@@ -58,8 +61,14 @@ packages:
     resolution: {integrity: sha512-3yWxPTq3UQ/FY9p1ErPxIyfT64elWaMvM9lIHnaqpyft63tkxodF5aUElYHrdisWve5cETkh1+KBw1yJuW0aRw==}
     engines: {node: '>=14.13.1'}
 
+  '@ark/schema@0.47.0':
+    resolution: {integrity: sha512-s5Hc1TUmRiA+NhewAHZJtl7xuFN0y4vAdv/JrvgCxgf1NKwBAylTvqCnQ8iPYn8kG3qAmHwgPpbJ+C5iHKJsbQ==}
+
   '@ark/schema@0.56.0':
     resolution: {integrity: sha512-ECg3hox/6Z/nLajxXqNhgPtNdHWC9zNsDyskwO28WinoFEnWow4IsERNz9AnXRhTZJnYIlAJ4uGn3nlLk65vZA==}
+
+  '@ark/util@0.47.0':
+    resolution: {integrity: sha512-KAOwSSjgZCEYd/3QEIjmq1LRHnVk2fOjypGVfm3V+1C7KrSsV5yRoQjb50b0KTuA1A317G9LXz+UD6g4O1A6NA==}
 
   '@ark/util@0.56.0':
     resolution: {integrity: sha512-BghfRC8b9pNs3vBoDJhcta0/c1J1rsoS1+HgVUreMFPdhz/CRAKReAu57YEllNaSy98rWAdY1gE+gFup7OXpgA==}
@@ -273,6 +282,12 @@ packages:
   '@eslint/plugin-kit@0.6.1':
     resolution: {integrity: sha512-iH1B076HoAshH1mLpHMgwdGeTs0CYwL0SPMkGuSebZrwBp16v415e9NZXg2jtrqPVQjf6IANe2Vtlr5KswtcZQ==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
+
+  '@faremeter/info@0.19.0':
+    resolution: {integrity: sha512-pC7RQFFrximHAhLlvyulHG1dGTKFIikGn7vED/Gz3h0wfLkG2ahyKPZ9xOEQ7m5oGafHUKiH/ZpMNGrzz5g6ew==}
+
+  '@faremeter/types@0.19.0':
+    resolution: {integrity: sha512-r4KrHKz+TxjCQXdlongmaCHMwR6HiQ7Ta/t89PWk6dq/pw9SmoviqeFJzhhkapff4cmaL2kS9Fr1c5ys0pLCEQ==}
 
   '@gar/promise-retry@1.0.3':
     resolution: {integrity: sha512-GmzA9ckNokPypTg10pgpeHNQe7ph+iIKKmhKu3Ob9ANkswreCx7R3cKmY781K8QK3AqVL3xVh9A42JvIAbkkSA==}
@@ -734,6 +749,9 @@ packages:
 
   arkregex@0.0.5:
     resolution: {integrity: sha512-ncYjBdLlh5/QnVsAA8De16Tc9EqmYM7y/WU9j+236KcyYNUXogpz3sC4ATIZYzzLxwI+0sEOaQLEmLmRleaEXw==}
+
+  arktype@2.1.21:
+    resolution: {integrity: sha512-RPsqONfr/hi8nnlzqSn1i3oMAtvFqt8jIVD7tIFoqP+/wu0Jb04f0bQOLBBDILWv+tjBxBqmCeIfO4f9AMYktw==}
 
   arktype@2.2.0:
     resolution: {integrity: sha512-t54MZ7ti5BhOEvzEkgKnWvqj+UbDfWig+DHr5I34xatymPusKLS0lQpNJd8M6DzmIto2QGszHfNKoFIT8tMCZQ==}
@@ -1761,9 +1779,15 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 4.0.0
 
+  '@ark/schema@0.47.0':
+    dependencies:
+      '@ark/util': 0.47.0
+
   '@ark/schema@0.56.0':
     dependencies:
       '@ark/util': 0.56.0
+
+  '@ark/util@0.47.0': {}
 
   '@ark/util@0.56.0': {}
 
@@ -1889,6 +1913,15 @@ snapshots:
     dependencies:
       '@eslint/core': 1.1.1
       levn: 0.4.1
+
+  '@faremeter/info@0.19.0':
+    dependencies:
+      '@faremeter/types': 0.19.0
+      arktype: 2.1.21
+
+  '@faremeter/types@0.19.0':
+    dependencies:
+      arktype: 2.1.21
 
   '@gar/promise-retry@1.0.3': {}
 
@@ -2516,6 +2549,11 @@ snapshots:
   arkregex@0.0.5:
     dependencies:
       '@ark/util': 0.56.0
+
+  arktype@2.1.21:
+    dependencies:
+      '@ark/schema': 0.47.0
+      '@ark/util': 0.47.0
 
   arktype@2.2.0:
     dependencies:
