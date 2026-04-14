@@ -1,13 +1,14 @@
 import { command, option, optional, string, positional } from "cmd-ts";
-import { search, listAllProxies } from "../api/client.js";
+import { search, listAllProxies, resolveApiBaseUrl } from "../api/client.js";
 import type { Proxy, SearchEndpoint } from "../api/schemas.js";
 import {
   formatPrice,
   printFormatted,
   printJson,
   printYaml,
+  writeLine,
 } from "../output/format.js";
-import { formatFlag } from "../flags.js";
+import { formatFlag, resolveOutputFormat } from "../flags.js";
 
 export const discover = command({
   name: "discover",
@@ -18,16 +19,17 @@ export const discover = command({
     format: formatFlag,
   },
   handler: async ({ query, tag, format: formatArg }) => {
-    const format = formatArg ?? "table";
+    const format = await resolveOutputFormat(formatArg);
+    const baseUrl = await resolveApiBaseUrl();
     let proxies: Proxy[];
     let endpoints: SearchEndpoint[] = [];
 
     if (query) {
-      const result = await search(query);
+      const result = await search(query, baseUrl);
       proxies = result.proxies;
       endpoints = result.endpoints;
     } else {
-      proxies = await listAllProxies();
+      proxies = await listAllProxies(baseUrl);
     }
 
     if (tag) {
@@ -41,7 +43,7 @@ export const discover = command({
     }
 
     if (proxies.length === 0 && endpoints.length === 0) {
-      process.stdout.write("No services found.\n");
+      writeLine("No services found.");
       return;
     }
 
@@ -70,8 +72,8 @@ export const discover = command({
     }
 
     if (endpoints.length > 0) {
-      if (proxies.length > 0) process.stdout.write("\n");
-      process.stdout.write("Matching endpoints:\n");
+      if (proxies.length > 0) writeLine("");
+      writeLine("Matching endpoints:");
       printFormatted(
         format,
         endpoints,

@@ -1,18 +1,26 @@
 import { option, optional } from "cmd-ts";
+import { loadConfig } from "./config/index.js";
 import type { OutputFormat } from "./output/format.js";
 
 const FORMAT_VALUES = new Set(["table", "json", "yaml"]);
 
-const formatType = {
+export function isNoDnaEnabled(): boolean {
+  const value = process.env.NO_DNA;
+  return value != null && value !== "" && value !== "0" && value !== "false";
+}
+
+export const formatType = {
   async from(s: string): Promise<OutputFormat> {
     if (!FORMAT_VALUES.has(s)) {
       throw new Error(
         `Invalid format "${s}". Must be one of: table, json, yaml`,
       );
     }
-    return s as OutputFormat;
+    if (s === "table" || s === "json" || s === "yaml") {
+      return s;
+    }
+    throw new Error(`Invalid format "${s}". Must be one of: table, json, yaml`);
   },
-  defaultValue: () => "table" as OutputFormat,
   description: "table, json, or yaml",
   displayName: "format",
 };
@@ -21,5 +29,22 @@ export const formatFlag = option({
   type: optional(formatType),
   long: "format",
   short: "f",
-  description: "Output format: table, json, yaml (default: table)",
+  description:
+    "Output format: table, json, yaml (default: config or table; NO_DNA => json)",
 });
+
+export async function resolveOutputFormat(
+  format: OutputFormat | undefined,
+  configPath?: string,
+): Promise<OutputFormat> {
+  if (format != null) {
+    return format;
+  }
+
+  if (isNoDnaEnabled()) {
+    return "json";
+  }
+
+  const loaded = await loadConfig(configPath);
+  return loaded?.resolved.preferences.format ?? "table";
+}
