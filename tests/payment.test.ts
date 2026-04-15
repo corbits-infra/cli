@@ -7,10 +7,117 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { createBuildPaymentRetryHeader } from "../src/payment/header.js";
 import { createBuildPayer } from "../src/payment/payer.js";
 import { createBuildOwsAdapter } from "../src/payment/ows.js";
 
 await t.test("payer helpers", async (t) => {
+  await t.test("builds X-PAYMENT retry headers", async (t) => {
+    const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+      buildPayer: (async (
+        _config: unknown,
+        args?: {
+          fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+        },
+      ) => ({
+        addWalletAdapter: () => undefined,
+        addLocalWallet: async () => undefined,
+        fetch: async (url: string) => {
+          await args?.fetch?.(url, {
+            headers: {
+              "X-PAYMENT": "canonical-x-payment-header",
+            },
+          });
+          return new Response("", { status: 200, statusText: "OK" });
+        },
+      })) as never,
+    });
+
+    const header = await buildPaymentRetryHeader({
+      config: {
+        version: 1,
+        preferences: { format: "table", apiUrl: "https://api.corbits.dev" },
+        payment: {
+          network: "devnet",
+          family: "solana",
+          address: "So11111111111111111111111111111111111111112",
+          asset: "USDC",
+          rpcUrl: "https://api.devnet.solana.com",
+        },
+        activeWallet: {
+          kind: "keypair",
+          family: "solana",
+          address: "So11111111111111111111111111111111111111112",
+          path: "~/.config/solana/id.json",
+          expandedPath: "/tmp/id.json",
+        },
+      },
+      response: new Response("", {
+        status: 402,
+        statusText: "Payment Required",
+      }),
+      url: "https://example.com",
+      requestInit: { method: "POST", body: '{"ok":true}' },
+    });
+
+    t.same(header, {
+      name: "X-PAYMENT",
+      value: "canonical-x-payment-header",
+    });
+  });
+
+  await t.test("rejects non-canonical retry headers", async (t) => {
+    const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+      buildPayer: (async (
+        _config: unknown,
+        args?: {
+          fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+        },
+      ) => ({
+        addWalletAdapter: () => undefined,
+        addLocalWallet: async () => undefined,
+        fetch: async (url: string) => {
+          await args?.fetch?.(url, {
+            headers: {
+              PAYMENT: "legacy-payment-header",
+            },
+          });
+          return new Response("", { status: 200, statusText: "OK" });
+        },
+      })) as never,
+    });
+
+    await t.rejects(
+      buildPaymentRetryHeader({
+        config: {
+          version: 1,
+          preferences: { format: "table", apiUrl: "https://api.corbits.dev" },
+          payment: {
+            network: "devnet",
+            family: "solana",
+            address: "So11111111111111111111111111111111111111112",
+            asset: "USDC",
+            rpcUrl: "https://api.devnet.solana.com",
+          },
+          activeWallet: {
+            kind: "keypair",
+            family: "solana",
+            address: "So11111111111111111111111111111111111111112",
+            path: "~/.config/solana/id.json",
+            expandedPath: "/tmp/id.json",
+          },
+        },
+        response: new Response("", {
+          status: 402,
+          statusText: "Payment Required",
+        }),
+        url: "https://example.com",
+        requestInit: { method: "GET" },
+      }),
+      /failed to generate payment retry header/,
+    );
+  });
+
   await t.test("rejects unsupported payer networks", async (t) => {
     const buildPayer = createBuildPayer({
       createPayer: (() => {
@@ -266,6 +373,93 @@ await t.test("OWS adapter", async (t) => {
     },
   );
 
+  await t.test(
+    "selects the matching account from multi-account OWS wallets",
+    async (t) => {
+      let capturedWallet:
+        | {
+            publicKey: PublicKey;
+          }
+        | undefined;
+
+      const buildOwsAdapter = createBuildOwsAdapter({
+        getWallet: (() => ({
+          id: "wallet-solana-id",
+          name: "primary-solana",
+          accounts: [
+            {
+              chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              address: "8GUFsPwiE7npjTXujUua5yEuEm1cPefB8MpWkLJ1Fvr6",
+              derivationPath: "m/44'/501'/0'/0'",
+            },
+            {
+              chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              address: "So11111111111111111111111111111111111111112",
+              derivationPath: "m/44'/501'/0'/1'",
+            },
+          ],
+          createdAt: "",
+        })) as never,
+        signTransaction: (() => {
+          throw new Error("should not sign in this test");
+        }) as never,
+        signTypedData: (() => {
+          throw new Error("should not sign typed data for Solana");
+        }) as never,
+        createConnection: (() =>
+          ({
+            getTokenAccountBalance: async () => ({
+              value: {
+                amount: "0",
+                decimals: 6,
+              },
+            }),
+          }) as never) as never,
+        createPublicClient: (() => ({}) as never) as never,
+        lookupKnownSPLToken: (() => ({
+          address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          name: "USDC",
+        })) as never,
+        clusterToCAIP2: (() => ({
+          caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        })) as never,
+        lookupKnownAsset: (() => undefined) as never,
+        lookupX402Network: (() => "") as never,
+        createSolanaPaymentHandler: ((wallet: unknown) => {
+          capturedWallet = wallet as typeof capturedWallet;
+          return (async () => []) as never;
+        }) as never,
+        createEvmPaymentHandler: (() => {
+          throw new Error("should not create an EVM handler for Solana");
+        }) as never,
+        getErc20Balance: (async () => ({ amount: 0n, decimals: 6 })) as never,
+      });
+
+      await buildOwsAdapter({
+        version: 1,
+        preferences: { format: "table", apiUrl: "https://api.corbits.dev" },
+        payment: {
+          network: "devnet",
+          family: "solana",
+          address: "So11111111111111111111111111111111111111112",
+          asset: "USDC",
+          rpcUrl: "https://api.devnet.solana.com",
+        },
+        activeWallet: {
+          kind: "ows",
+          family: "solana",
+          address: "So11111111111111111111111111111111111111112",
+          walletId: "primary-solana",
+        },
+      });
+
+      t.equal(
+        capturedWallet?.publicKey.toBase58(),
+        "So11111111111111111111111111111111111111112",
+      );
+    },
+  );
+
   await t.test("builds EVM adapters without passphrase handling", async (t) => {
     let capturedWallet:
       | {
@@ -423,7 +617,7 @@ await t.test("OWS adapter", async (t) => {
               walletId: "primary-solana",
             },
           }),
-        /does not match OWS wallet/,
+        /does not match any solana account in OWS wallet/,
       );
     },
   );
@@ -486,7 +680,7 @@ await t.test("OWS adapter", async (t) => {
               walletId: "primary-evm",
             },
           }),
-        /does not match OWS wallet/,
+        /does not match any evm account in OWS wallet/,
       );
     },
   );

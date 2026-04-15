@@ -57,6 +57,34 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
   return Promise.resolve(captured);
 }
 
+export function captureStdoutBytes(
+  fn: () => void | Promise<void>,
+): Promise<Uint8Array> {
+  const original = process.stdout.write.bind(process.stdout);
+  const captured: Uint8Array[] = [];
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured.push(
+      typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk),
+    );
+    return true;
+  }) as typeof process.stdout.write;
+  const result = fn();
+  if (result instanceof Promise) {
+    return result.then(
+      () => {
+        process.stdout.write = original;
+        return Buffer.concat(captured);
+      },
+      (err: unknown) => {
+        process.stdout.write = original;
+        throw err;
+      },
+    );
+  }
+  process.stdout.write = original;
+  return Promise.resolve(Buffer.concat(captured));
+}
+
 export function captureStderr(fn: () => void | Promise<void>): Promise<string> {
   const original = process.stderr.write.bind(process.stderr);
   let captured = "";

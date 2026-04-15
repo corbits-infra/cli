@@ -43,6 +43,8 @@ type EvmChainInfo = {
   viemChain: Chain;
 };
 
+type SupportedEvmPaymentNetwork = "base" | "base-sepolia";
+
 type OwsWalletAccount = {
   account: AccountInfo;
   walletId: string;
@@ -67,7 +69,7 @@ const OWS_ACCOUNT_CHAIN_PREFIX: Record<WalletFamily, string> = {
   solana: "solana:",
 };
 
-const EVM_CHAIN_INFO: Record<string, EvmChainInfo> = {
+const EVM_CHAIN_INFO: Record<SupportedEvmPaymentNetwork, EvmChainInfo> = {
   base: {
     id: 8453,
     name: "Base",
@@ -192,20 +194,20 @@ function stringifyTypedData(value: unknown): string {
   );
 }
 
-function getWalletAccountForFamily(
+function getWalletAccountsForFamily(
   wallet: WalletInfo,
   family: WalletFamily,
-): AccountInfo {
+): AccountInfo[] {
   const prefix = OWS_ACCOUNT_CHAIN_PREFIX[family];
-  const account = wallet.accounts.find(({ chainId }) =>
+  const accounts = wallet.accounts.filter(({ chainId }) =>
     chainId.startsWith(prefix),
   );
-  if (account == null) {
+  if (accounts.length === 0) {
     throw new ConfigError(
       `OWS wallet ${wallet.name} does not contain a ${family} account`,
     );
   }
-  return account;
+  return accounts;
 }
 
 function walletAddressesMatch(
@@ -236,11 +238,14 @@ function getOwsWalletAccount(
   }
 
   const wallet = deps.getWallet(config.activeWallet.walletId);
-  const account = getWalletAccountForFamily(wallet, config.activeWallet.family);
+  const account = getWalletAccountsForFamily(
+    wallet,
+    config.activeWallet.family,
+  ).find((candidate) => walletAddressesMatch(config.activeWallet, candidate));
 
-  if (!walletAddressesMatch(config.activeWallet, account)) {
+  if (account == null) {
     throw new ConfigError(
-      `Configured ${config.activeWallet.family} address ${config.activeWallet.address} does not match OWS wallet ${wallet.name} address ${account.address}`,
+      `Configured ${config.activeWallet.family} address ${config.activeWallet.address} does not match any ${config.activeWallet.family} account in OWS wallet ${wallet.name}`,
     );
   }
 
@@ -264,13 +269,15 @@ function getSolanaCluster(config: ResolvedConfig): "mainnet-beta" | "devnet" {
 }
 
 function getEvmChainInfo(config: ResolvedConfig): EvmChainInfo {
-  const chainInfo = EVM_CHAIN_INFO[config.payment.network];
-  if (chainInfo == null) {
-    throw new ConfigError(
-      `OWS EVM payments do not support network ${config.payment.network}`,
-    );
+  switch (config.payment.network) {
+    case "base":
+    case "base-sepolia":
+      return EVM_CHAIN_INFO[config.payment.network];
   }
-  return chainInfo;
+
+  throw new ConfigError(
+    `OWS EVM payments do not support network ${config.payment.network}`,
+  );
 }
 
 export type OwsDeps = {

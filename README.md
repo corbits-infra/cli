@@ -51,25 +51,30 @@ The `--openapi` flag outputs the upstream spec as YAML by default, or as JSON wi
 
 ### call
 
-Make a paid request to an x402-gated endpoint using the active wallet from config.
+Run the system `curl` or `wget` client against an x402-gated endpoint using the
+active wallet from config. Corbits wraps the real executable, detects `402 Payment Required`,
+builds the payment header, and retries once with that header attached.
 
 ```
-corbits call https://api.example.x402.org/resource
-corbits call https://api.example.x402.org/data \
-  --method POST \
-  --header "Content-Type: application/json" \
-  --body '{"key":"value"}'
-corbits call https://api.example.x402.org/resource --format json
+corbits call curl https://api.example.x402.org/resource
+corbits call curl https://api.example.x402.org/data \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}'
+corbits call wget --method=POST https://api.example.x402.org/resource
 ```
+
+`call` only supports `curl` and `wget`. These are the underlying system CLIs,
+not Corbits-owned commands. Corbits preserves the wrapped client's normal
+stdout/stderr behavior on successful responses.
 
 `call` uses the active wallet resolved from the configured payment network:
 
 - keypair wallets are loaded from the configured local key file
 - OWS wallets are resolved by configured wallet name or ID through the local OWS wallet store
 
-Successful table output prints the HTTP status line followed by the raw response body. `json` and `yaml`
-print parsed JSON bodies directly when possible, and otherwise return a structured wrapper with status,
-headers, and body text.
+If a wrapped request still returns `402` after payment, Corbits exits non-zero
+and prints an error.
 
 ### config
 

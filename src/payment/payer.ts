@@ -11,6 +11,8 @@ type BuildPayerDeps = {
   buildOwsAdapter: typeof buildOwsAdapter;
 };
 
+type BuildPayerArgs = Parameters<CreatePayerFn>[0];
+
 type SupportedConfigNetwork = Exclude<
   ResolvedConfig["payment"]["network"],
   "localnet"
@@ -29,8 +31,12 @@ const PAYER_NETWORKS: Record<SupportedConfigNetwork, PayerNetwork> = {
 function getSupportedPayerNetwork(
   network: ResolvedConfig["payment"]["network"],
 ): PayerNetwork {
-  if (network in PAYER_NETWORKS) {
-    return PAYER_NETWORKS[network as SupportedConfigNetwork];
+  switch (network) {
+    case "devnet":
+    case "mainnet-beta":
+    case "base":
+    case "base-sepolia":
+      return PAYER_NETWORKS[network];
   }
 
   throw new ConfigError(`corbits call does not support network ${network}`);
@@ -58,12 +64,18 @@ async function attachWalletToPayer(
 }
 
 export function createBuildPayer(deps: BuildPayerDeps) {
-  return async function buildPayer(config: ResolvedConfig) {
+  return async function buildPayer(
+    config: ResolvedConfig,
+    args?: BuildPayerArgs,
+  ) {
     const network = getSupportedPayerNetwork(config.payment.network);
-    const payer = deps.createPayer({
+    const payerArgs: BuildPayerArgs = {
       networks: [network],
       assets: ["USDC"],
-    });
+      ...(args?.fetch == null ? {} : { fetch: args.fetch }),
+      ...(args?.options == null ? {} : { options: args.options }),
+    };
+    const payer = deps.createPayer(payerArgs);
 
     await attachWalletToPayer(payer, config, deps);
     return payer;
