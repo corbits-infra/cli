@@ -37,6 +37,22 @@ export function formatPrice(microUsdc: number): string {
   return `$${(microUsdc / 1_000_000).toFixed(6)}`;
 }
 
+export function formatTokenAmount(amount: string, decimals: number): string {
+  const normalized = amount.trim();
+  if (!/^\d+$/.test(normalized)) {
+    return amount;
+  }
+
+  const whole = normalized.padStart(decimals + 1, "0");
+  const splitIndex = whole.length - decimals;
+  const integerPart = whole.slice(0, splitIndex);
+  if (decimals === 0) {
+    return integerPart;
+  }
+  const fractionalPart = whole.slice(splitIndex);
+  return `${integerPart}.${fractionalPart}`;
+}
+
 export function tryParseJson(text: string): unknown {
   if (text.trim().length === 0) {
     return undefined;

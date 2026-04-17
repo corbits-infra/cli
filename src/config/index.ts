@@ -19,6 +19,7 @@ export {
   buildOwsWalletConfig,
   formatPaymentNetworkDisplay,
   formatSupportedPaymentNetworks,
+  getPaymentNetworkContext,
   getWalletFamilyForNetwork,
   isPaymentNetwork,
   listPaymentNetworks,

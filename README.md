@@ -61,12 +61,19 @@ corbits call curl https://api.example.x402.org/data \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"key":"value"}'
+corbits call --payment-info curl https://api.example.x402.org/resource
 corbits call wget --method=POST https://api.example.x402.org/resource
 ```
 
 `call` only supports `curl` and `wget`. These are the underlying system CLIs,
 not Corbits-owned commands. Corbits preserves the wrapped client's normal
 stdout/stderr behavior on successful responses.
+
+For `curl`, multi-transfer invocations with `--next` are rejected because
+Corbits cannot retry them safely after a `402` challenge.
+
+For `wget`, Corbits injects `--server-response` when it is missing so it can
+detect and handle a `402` challenge automatically.
 
 `call` uses the active wallet resolved from the configured payment network:
 
@@ -75,6 +82,17 @@ stdout/stderr behavior on successful responses.
 
 If a wrapped request still returns `402` after payment, Corbits exits non-zero
 and prints an error.
+
+When `--payment-info` is set, successful paid retries also print payment
+metadata to `stderr`:
+
+```
+Payment:
+  amount: 1000
+  asset: USDC
+  network: solana-mainnet-beta
+  tx_signature: 5k7...
+```
 
 ### config
 

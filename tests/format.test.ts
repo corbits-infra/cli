@@ -2,6 +2,7 @@
 
 import t from "tap";
 import {
+  formatTokenAmount,
   formatPrice,
   printFormatted,
   printJson,
@@ -24,6 +25,25 @@ await t.test("formatPrice", async (t) => {
     t.equal(formatPrice(5000), "$0.005000");
     t.end();
   });
+});
+
+await t.test("formatTokenAmount", async (t) => {
+  await t.test("formats integer base units using token decimals", async (t) => {
+    t.equal(formatTokenAmount("10000", 6), "0.010000");
+    t.equal(formatTokenAmount("1000", 6), "0.001000");
+    t.equal(formatTokenAmount("1", 6), "0.000001");
+    t.equal(formatTokenAmount("1000000", 6), "1.000000");
+    t.equal(formatTokenAmount("42", 0), "42");
+    t.end();
+  });
+
+  await t.test(
+    "returns the original value for non-integer strings",
+    async (t) => {
+      t.equal(formatTokenAmount("0.01", 6), "0.01");
+      t.end();
+    },
+  );
 });
 
 await t.test("printJson", async (t) => {

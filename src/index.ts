@@ -2,6 +2,7 @@
 
 import { createRequire } from "node:module";
 import { subcommands, run } from "cmd-ts";
+import { balance } from "./commands/balance.js";
 import { call } from "./commands/call.js";
 import { config } from "./commands/config.js";
 import { discover } from "./commands/discover.js";
@@ -16,7 +17,7 @@ const app = subcommands({
   name: "corbits",
   version: pkg.version,
   description: "Browse, filter, and test x402-gated services",
-  cmds: { discover, inspect, config, call },
+  cmds: { discover, inspect, config, call, balance },
 });
 
 run(app, process.argv.slice(2)).catch((err: unknown) => {
@@ -27,9 +28,13 @@ run(app, process.argv.slice(2)).catch((err: unknown) => {
   } else if (err instanceof ConfigError) {
     process.stderr.write(`Config error: ${err.message}\n`);
   } else {
-    process.stderr.write(
-      `Error: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
+    const message =
+      err instanceof Error
+        ? err.message.length > 0
+          ? err.message
+          : err.name
+        : String(err);
+    process.stderr.write(`Error: ${message}\n`);
   }
   process.exitCode = 1;
 });

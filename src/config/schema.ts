@@ -190,10 +190,23 @@ export function isPaymentNetwork(value: string): value is PaymentNetwork {
 export function getWalletFamilyForNetwork(
   network: PaymentNetwork,
 ): WalletFamily {
+  return getPaymentNetworkContext(network).family;
+}
+
+export function getPaymentNetworkContext(network: PaymentNetwork): {
+  family: WalletFamily;
+  displayName: string;
+} {
   if (network === "localnet" || solana.isKnownCluster(network)) {
-    return "solana";
+    return {
+      family: "solana",
+      displayName: PAYMENT_NETWORK_DISPLAY_NAMES[network],
+    };
   }
-  return "evm";
+  return {
+    family: "evm",
+    displayName: PAYMENT_NETWORK_DISPLAY_NAMES[network],
+  };
 }
 
 export function getPaymentNetworkDefaults(network: PaymentNetwork): {

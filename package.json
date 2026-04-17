@@ -47,7 +47,7 @@
     "@faremeter/info": "^0.19.0",
     "@faremeter/payment-evm": "^0.19.0",
     "@faremeter/payment-solana": "^0.19.0",
-    "@faremeter/rides": "^0.19.0",
+    "@faremeter/types": "^0.19.0",
     "@faremeter/wallet-evm": "^0.19.0",
     "@faremeter/wallet-solana": "^0.19.0",
     "@open-wallet-standard/core": "^1.2.4",

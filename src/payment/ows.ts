@@ -8,42 +8,25 @@ import {
 import { lookupKnownAsset, lookupX402Network } from "@faremeter/info/evm";
 import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
 import { exact as evmExact } from "@faremeter/payment-evm";
-import { getTokenBalance as getErc20Balance } from "@faremeter/payment-evm/erc20";
 import { exact as solanaExact } from "@faremeter/payment-solana";
-import type { WalletAdapter } from "@faremeter/rides";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import type { PaymentHandler } from "@faremeter/types/client";
 import {
   Connection,
   PublicKey,
   type VersionedTransaction,
 } from "@solana/web3.js";
-import {
-  createPublicClient,
-  fromHex,
-  http,
-  isAddress,
-  isAddressEqual,
-  isHex,
-  type Chain,
-  type Hex,
-  type PublicClient,
-} from "viem";
-import { base, baseSepolia } from "viem/chains";
+import { fromHex, isAddress, isAddressEqual, isHex, type Hex } from "viem";
 import { ConfigError } from "../config/index.js";
 import type {
   ResolvedConfig,
   ResolvedWallet,
   WalletFamily,
 } from "../config/index.js";
-
-type EvmChainInfo = {
-  id: number;
-  name: string;
-  owsChain: string;
-  viemChain: Chain;
-};
-
-type SupportedEvmPaymentNetwork = "base" | "base-sepolia";
+import {
+  type EvmChainInfo,
+  getEvmChainInfo,
+  getSolanaCluster,
+} from "./networks.js";
 
 type OwsWalletAccount = {
   account: AccountInfo;
@@ -57,6 +40,19 @@ type Eip712TypedData = {
   message: Record<string, unknown>;
 };
 
+export type OwsPaymentHandler = {
+  handler: PaymentHandler;
+  network: string;
+};
+
+const SOLANA_PAYMENT_HANDLER_OPTIONS = {
+  token: {
+    // Some x402 facilitators use PDA-owned settlement addresses as `payTo`.
+    // SPL ATA derivation must allow off-curve owners for those recipients.
+    allowOwnerOffCurve: true,
+  },
+} as const;
+
 const EIP712_DOMAIN_TYPE = [
   { name: "name", type: "string" },
   { name: "version", type: "string" },
@@ -67,21 +63,6 @@ const EIP712_DOMAIN_TYPE = [
 const OWS_ACCOUNT_CHAIN_PREFIX: Record<WalletFamily, string> = {
   evm: "eip155:",
   solana: "solana:",
-};
-
-const EVM_CHAIN_INFO: Record<SupportedEvmPaymentNetwork, EvmChainInfo> = {
-  base: {
-    id: 8453,
-    name: "Base",
-    owsChain: "base",
-    viemChain: base,
-  },
-  "base-sepolia": {
-    id: 84532,
-    name: "Base Sepolia",
-    owsChain: "base",
-    viemChain: baseSepolia,
-  },
 };
 
 function normalizeHex(value: string): string {
@@ -122,40 +103,6 @@ function signSolanaTransactionWithOws(
       "bytes",
     ),
   );
-}
-
-async function getSplTokenBalanceWithConnection(args: {
-  connection: Connection;
-  account: string;
-  asset: string;
-}): Promise<{ amount: bigint; decimals: number } | null> {
-  const ata = getAssociatedTokenAddressSync(
-    new PublicKey(args.asset),
-    new PublicKey(args.account),
-  );
-
-  try {
-    const tokenAmount = await args.connection.getTokenAccountBalance(
-      ata,
-      "confirmed",
-    );
-
-    return {
-      amount: BigInt(tokenAmount.value.amount),
-      decimals: tokenAmount.value.decimals,
-    };
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === "TokenAccountNotFoundError" ||
-        error.name === "AccountNotFoundError" ||
-        error.message.includes("could not find account"))
-    ) {
-      return null;
-    }
-
-    throw error;
-  }
 }
 
 function normalizeTypedDataForOws(value: unknown): unknown {
@@ -255,50 +202,20 @@ function getOwsWalletAccount(
   };
 }
 
-function getSolanaCluster(config: ResolvedConfig): "mainnet-beta" | "devnet" {
-  switch (config.payment.network) {
-    case "mainnet-beta":
-      return "mainnet-beta";
-    case "devnet":
-      return "devnet";
-    default:
-      throw new ConfigError(
-        `OWS Solana payments do not support network ${config.payment.network}`,
-      );
-  }
-}
-
-function getEvmChainInfo(config: ResolvedConfig): EvmChainInfo {
-  switch (config.payment.network) {
-    case "base":
-    case "base-sepolia":
-      return EVM_CHAIN_INFO[config.payment.network];
-  }
-
-  throw new ConfigError(
-    `OWS EVM payments do not support network ${config.payment.network}`,
-  );
-}
-
 export type OwsDeps = {
   getWallet: typeof getWallet;
   signTransaction: typeof owsSignTransaction;
   signTypedData: typeof owsSignTypedData;
   createConnection: (rpcUrl: string) => Connection;
-  createPublicClient: (parameters: {
-    chain: Chain;
-    transport: ReturnType<typeof http>;
-  }) => PublicClient;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
   lookupX402Network: typeof lookupX402Network;
   createSolanaPaymentHandler: typeof solanaExact.createPaymentHandler;
   createEvmPaymentHandler: typeof evmExact.createPaymentHandler;
-  getErc20Balance: typeof getErc20Balance;
 };
 
-function buildSolanaWalletAdapter(
+function buildSolanaOwsWallet(
   cluster: "mainnet-beta" | "devnet",
   walletId: string,
   publicKey: PublicKey,
@@ -314,11 +231,11 @@ function buildSolanaWalletAdapter(
   };
 }
 
-function createSolanaOwsAdapter(
+function buildSolanaOwsPaymentHandler(
   config: ResolvedConfig,
   walletAccount: OwsWalletAccount,
   deps: OwsDeps,
-): WalletAdapter {
+): OwsPaymentHandler {
   const cluster = getSolanaCluster(config);
   const tokenInfo = deps.lookupKnownSPLToken(cluster, "USDC");
   if (tokenInfo == null) {
@@ -328,44 +245,29 @@ function createSolanaOwsAdapter(
   const publicKey = new PublicKey(walletAccount.account.address);
   const connection = deps.createConnection(config.payment.rpcUrl);
   const mint = new PublicKey(tokenInfo.address);
-  const wallet = buildSolanaWalletAdapter(
+  const wallet = buildSolanaOwsWallet(
     cluster,
     walletAccount.walletId,
     publicKey,
     deps,
   );
-  const x402Id = [
-    {
-      scheme: "exact",
-      network: deps.clusterToCAIP2(cluster).caip2,
-      asset: tokenInfo.address,
-    },
-  ];
 
   return {
-    x402Id,
-    paymentHandler: deps.createSolanaPaymentHandler(wallet, mint, connection),
-    getBalance: async () => {
-      const balance = await getSplTokenBalanceWithConnection({
-        connection,
-        account: walletAccount.account.address,
-        asset: tokenInfo.address,
-      });
-
-      return {
-        amount: balance?.amount ?? 0n,
-        decimals: balance?.decimals ?? 0,
-        name: tokenInfo.name,
-      };
-    },
+    handler: deps.createSolanaPaymentHandler(
+      wallet,
+      mint,
+      connection,
+      SOLANA_PAYMENT_HANDLER_OPTIONS,
+    ),
+    network: deps.clusterToCAIP2(cluster).caip2,
   };
 }
 
-function buildEvmWalletAdapter(
+function buildEvmOwsWallet(
   walletId: string,
   chainInfo: EvmChainInfo,
   address: Hex,
-  deps: OwsDeps,
+  deps: Pick<OwsDeps, "signTypedData">,
 ) {
   return {
     chain: { id: chainInfo.id, name: chainInfo.name },
@@ -384,11 +286,11 @@ function buildEvmWalletAdapter(
   };
 }
 
-function createEvmOwsAdapter(
+function buildEvmOwsPaymentHandler(
   config: ResolvedConfig,
   walletAccount: OwsWalletAccount,
   deps: OwsDeps,
-): WalletAdapter {
+): OwsPaymentHandler {
   const chainInfo = getEvmChainInfo(config);
   const assetInfo = deps.lookupKnownAsset(chainInfo.id, "USDC");
   if (assetInfo == null) {
@@ -401,69 +303,42 @@ function createEvmOwsAdapter(
     walletAccount.account.address,
     `OWS wallet returned an invalid EVM address for ${walletAccount.account.chainId}`,
   );
-  const publicClient = deps.createPublicClient({
-    chain: chainInfo.viemChain,
-    transport: http(config.payment.rpcUrl),
-  });
-  const wallet = buildEvmWalletAdapter(
+  const wallet = buildEvmOwsWallet(
     walletAccount.walletId,
     chainInfo,
     address,
     deps,
   );
-  const x402Id = [
-    {
-      scheme: "exact",
-      network: deps.lookupX402Network(chainInfo.id),
-      asset: assetInfo.address,
-    },
-  ];
 
   return {
-    x402Id,
-    paymentHandler: deps.createEvmPaymentHandler(wallet, {
-      asset: assetInfo,
-    }),
-    getBalance: async () => {
-      const balance = await deps.getErc20Balance({
-        account: address,
-        asset: assetInfo.address,
-        client: publicClient,
-      });
-
-      return {
-        ...balance,
-        name: assetInfo.contractName,
-      };
-    },
+    handler: deps.createEvmPaymentHandler(wallet, { asset: assetInfo }),
+    network: deps.lookupX402Network(chainInfo.id),
   };
 }
 
-export function createBuildOwsAdapter(deps: OwsDeps) {
-  return async function buildOwsAdapter(
+export function createBuildOwsPaymentHandler(deps: OwsDeps) {
+  return async function buildOwsPaymentHandler(
     config: ResolvedConfig,
-  ): Promise<WalletAdapter> {
+  ): Promise<OwsPaymentHandler> {
     const walletAccount = getOwsWalletAccount(config, deps);
 
     if (config.activeWallet.family === "solana") {
-      return createSolanaOwsAdapter(config, walletAccount, deps);
+      return buildSolanaOwsPaymentHandler(config, walletAccount, deps);
     }
 
-    return createEvmOwsAdapter(config, walletAccount, deps);
+    return buildEvmOwsPaymentHandler(config, walletAccount, deps);
   };
 }
 
-export const buildOwsAdapter = createBuildOwsAdapter({
+export const buildOwsPaymentHandler = createBuildOwsPaymentHandler({
   getWallet,
   signTransaction: owsSignTransaction,
   signTypedData: owsSignTypedData,
   createConnection: (rpcUrl) => new Connection(rpcUrl, "confirmed"),
-  createPublicClient,
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,
   lookupX402Network,
   createSolanaPaymentHandler: solanaExact.createPaymentHandler,
   createEvmPaymentHandler: evmExact.createPaymentHandler,
-  getErc20Balance,
 });
