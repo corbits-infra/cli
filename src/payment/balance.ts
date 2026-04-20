@@ -18,7 +18,7 @@ import {
   getSolanaClusterForNetwork,
 } from "./networks.js";
 import { extractPaymentRequiredResponse } from "./signer.js";
-import type { WrappedRunResult } from "../commands/call-wrapper.js";
+import type { WrappedRunResult } from "../process/wrapped-client.js";
 
 const USDC_DECIMALS = 6;
 

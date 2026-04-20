@@ -32,8 +32,8 @@ import type { ResolvedConfig } from "../config/index.js";
 import { buildOwsPaymentHandler } from "./ows.js";
 import { getEvmChainInfo, getSolanaCluster } from "./networks.js";
 
-import type { RetryHeader } from "../commands/call-wrapper.js";
-export type { RetryHeader } from "../commands/call-wrapper.js";
+import type { RetryHeader } from "../process/wrapped-client.js";
+export type { RetryHeader } from "../process/wrapped-client.js";
 
 export type PaymentHandlerInfo = {
   handler: PaymentHandler;

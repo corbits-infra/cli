@@ -75,6 +75,223 @@ node dist/index.js call --payment-info curl -sS 'https://agent.metengine.xyz/api
 
 This route is useful for validating the Solana-only payment requirement path.
 
+## xAI Image Generation Route
+
+Test the xAI image generation route with `--payment-info` enabled:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://xai.api.corbits.dev/v1/images/generations \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "grok-imagine-image",
+    "prompt": "A playful cartoon character coding at a laptop, colorful hoodie, expressive face, clean vector-like style, bright desk setup, screen full of code, high detail"
+  }'
+```
+
+This route returns JSON with a direct image URL in `data[0].url`. The tested
+response shape looked like:
+
+```json
+{
+  "data": [
+    {
+      "url": "https://imgen.x.ai/...jpeg",
+      "mime_type": "image/jpeg",
+      "revised_prompt": ""
+    }
+  ],
+  "usage": {
+    "cost_in_usd_ticks": 200000000
+  }
+}
+```
+
+To save the returned image locally:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://xai.api.corbits.dev/v1/images/generations \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "grok-imagine-image",
+    "prompt": "A playful cartoon character coding at a laptop, colorful hoodie, expressive face, clean vector-like style, bright desk setup, screen full of code, high detail"
+  }' \
+  > xai-image.json
+
+curl -L "$(jq -r '.data[0].url' xai-image.json)" -o xai-image.jpeg
+```
+
+This route is useful for validating that `corbits call` can complete a paid
+retry and return a usable image URL.
+
+## QuiverAI Text-To-SVG Route
+
+Test the QuiverAI text-to-SVG route with `--payment-info` enabled:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://quiverai.api.corbits.dev/v1/svgs/generations \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "arrow-1.1",
+    "prompt": "Generate a minimalist rocket icon",
+    "stream": false
+  }'
+```
+
+Working `wget` equivalent:
+
+```bash
+node dist/index.js call --payment-info wget 'https://quiverai.api.corbits.dev/v1/svgs/generations' \
+  --method=POST \
+  --header 'Content-Type: application/json' \
+  --body-data '{"model":"arrow-1.1","prompt":"Generate a minimalist rocket icon","stream":false}'
+```
+
+This route returns JSON with inline SVG content in `data[0].svg`. The tested
+response shape looked like:
+
+```json
+{
+  "id": "da9885b5696649f895ded2cd82feba33",
+  "data": [
+    {
+      "svg": "<svg ...>...</svg>",
+      "mime_type": "image/svg+xml"
+    }
+  ],
+  "credits": 20
+}
+```
+
+To save the returned SVG locally:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://quiverai.api.corbits.dev/v1/svgs/generations \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "arrow-1.1",
+    "prompt": "Generate a minimalist rocket icon",
+    "stream": false
+  }' \
+  | jq -r '.data[0].svg' > quiver-rocket.svg
+```
+
+This route is useful for validating a paid request that returns the final SVG
+inline rather than as a task id or external asset URL. For `wget`, prefer
+`--method=POST` with `--body-data` for this route.
+
+## Runway Text-To-Image Route
+
+Test the Runway text-to-image route with `--payment-info` enabled:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/text_to_image \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'X-Runway-Version: 2024-11-06' \
+  -d '{
+    "model": "gemini_2.5_flash",
+    "promptText": "A playful cartoon character coding at a laptop, colorful hoodie, expressive face, clean vector-like style, bright desk setup, screen full of code, high detail",
+    "ratio": "1024:1024"
+  }'
+```
+
+This route returns a task id:
+
+```json
+{
+  "id": "1f5831a8-19cb-4e44-8fb7-72579fb98229"
+}
+```
+
+Poll the task until it reaches `SUCCEEDED`:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/tasks/1f5831a8-19cb-4e44-8fb7-72579fb98229 \
+  -H 'X-Runway-Version: 2024-11-06'
+```
+
+The tested task response looked like:
+
+```json
+{
+  "id": "1f5831a8-19cb-4e44-8fb7-72579fb98229",
+  "status": "SUCCEEDED",
+  "output": ["https://dnznrvs05pmza.cloudfront.net/...png?_jwt=..."]
+}
+```
+
+To save the returned image locally:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/tasks/1f5831a8-19cb-4e44-8fb7-72579fb98229 \
+  -H 'X-Runway-Version: 2024-11-06' \
+  > runway-task.json
+
+curl -L "$(jq -r '.output[0]' runway-task.json)" -o runway-image.png
+```
+
+This route is useful for validating a paid task-creation flow where the first
+request returns a task id and a follow-up poll returns the final image URL.
+
+## Runway Text-To-Video Route
+
+Test the Runway text-to-video route with `--payment-info` enabled:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/text_to_video \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'X-Runway-Version: 2024-11-06' \
+  -d '{
+    "model": "veo3.1_fast",
+    "promptText": "A playful cartoon character coding at a laptop in a bright studio, animated camera motion, expressive face, colorful hoodie",
+    "ratio": "1280:720",
+    "duration": 4
+  }'
+```
+
+This route returns a task id:
+
+```json
+{
+  "id": "bb02eaad-4e02-4b70-9709-bd69dddb5b28"
+}
+```
+
+Poll the task until it reaches `SUCCEEDED`:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/tasks/bb02eaad-4e02-4b70-9709-bd69dddb5b28 \
+  -H 'X-Runway-Version: 2024-11-06'
+```
+
+The tested task response looked like:
+
+```json
+{
+  "id": "bb02eaad-4e02-4b70-9709-bd69dddb5b28",
+  "status": "SUCCEEDED",
+  "output": ["https://dnznrvs05pmza.cloudfront.net/...mp4?_jwt=..."]
+}
+```
+
+To save the returned video locally:
+
+```bash
+node dist/index.js call --payment-info curl -sS https://runway.api.corbits.dev/v1/tasks/bb02eaad-4e02-4b70-9709-bd69dddb5b28 \
+  -H 'X-Runway-Version: 2024-11-06' \
+  > runway-video-task.json
+
+curl -L "$(jq -r '.output[0]' runway-video-task.json)" -o runway-video.mp4
+```
+
+This route is useful for validating a paid task-creation flow where the first
+request returns a task id and a follow-up poll returns the final video URL.
+
 ## Switch To EVM OWS Wallet
 
 If you want to test using the configured EVM OWS wallet instead of the active
@@ -109,5 +326,6 @@ node dist/index.js call --payment-info curl -sS https://exa.api.corbits.dev/sear
 ## Notes
 
 - Use `-sS` with `curl` so the progress meter does not mix into `stderr`.
-- `--payment-info` prints payment metadata only after a successful paid retry.
+- `--payment-info` confirms that the CLI sent a paid retry and also prints the
+  paid response status separately.
 - The displayed amount is formatted using token decimals when available.

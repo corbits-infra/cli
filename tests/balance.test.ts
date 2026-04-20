@@ -10,7 +10,7 @@ import {
   type BalanceDeps,
   type PreflightBalanceDeps,
 } from "../src/payment/balance.js";
-import type { WrappedRunResult } from "../src/commands/call-wrapper.js";
+import type { WrappedRunResult } from "../src/process/wrapped-client.js";
 import type { LoadedConfig } from "../src/config/index.js";
 import { captureStdout } from "./test-helpers.js";
 
