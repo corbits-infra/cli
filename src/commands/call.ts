@@ -1,12 +1,17 @@
 import { command, flag, positional, rest, string } from "cmd-ts";
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
-import { formatTokenAmount } from "../output/format.js";
+import {
+  formatDisplayTokenAmount,
+  type OutputFormat,
+} from "../output/format.js";
 import {
   buildPaymentRetryHeader,
+  extractPaymentRequiredResponse,
   extractPaymentResponseTransaction,
   type PaymentMetadata,
 } from "../payment/signer.js";
+import { getPaymentOptions, printPaymentOptions } from "../payment/options.js";
 import {
   checkPreflightBalance,
   defaultPreflightBalanceDeps,
@@ -17,6 +22,11 @@ import {
   type WrappedRunResult,
   runWrappedClient,
 } from "../process/wrapped-client.js";
+import {
+  formatFlag,
+  resolveOutputFormat,
+  tryParseOutputFormat,
+} from "../flags.js";
 
 type CallDeps = {
   loadRequiredConfig: typeof loadRequiredConfig;
@@ -28,12 +38,6 @@ type CallDeps = {
     deps: PreflightBalanceDeps,
   ) => Promise<void>;
   preflightBalanceDeps?: PreflightBalanceDeps;
-};
-
-type CallArgs = {
-  paymentInfo: boolean;
-  tool: string;
-  args: string[];
 };
 
 type ResponseStatusMetadata = {
@@ -49,11 +53,11 @@ function formatPaymentSummary(args: {
   responseStatus?: ResponseStatusMetadata;
 }): string {
   const { paymentInfo, responseStatus } = args;
-  const displayDecimals = getPaymentDisplayDecimals(paymentInfo);
-  const amount =
-    displayDecimals == null
-      ? paymentInfo.amount
-      : formatTokenAmount(paymentInfo.amount, displayDecimals);
+  const amount = formatDisplayTokenAmount({
+    amount: paymentInfo.amount,
+    asset: paymentInfo.asset,
+    ...(paymentInfo.decimals == null ? {} : { decimals: paymentInfo.decimals }),
+  });
   const parts = [
     `Payment: ${amount} ${paymentInfo.asset} on ${paymentInfo.network}`,
   ];
@@ -67,18 +71,6 @@ function formatPaymentSummary(args: {
   }
 
   return parts.join(", ");
-}
-
-function getPaymentDisplayDecimals(
-  paymentInfo: PaymentMetadata,
-): number | undefined {
-  if (paymentInfo.decimals != null) {
-    return paymentInfo.decimals;
-  }
-  if (paymentInfo.asset === "USDC") {
-    return 6;
-  }
-  return undefined;
 }
 
 function writeOutcomeOutput(
@@ -125,6 +117,45 @@ function writeOutcomeOutput(
 function write402Error(message: string): void {
   process.stderr.write(`Error: ${message}\n`);
   process.exitCode = 1;
+}
+
+function extractInlineFormatArg(args: string[]): {
+  args: string[];
+  format?: OutputFormat;
+} {
+  const nextArgs: string[] = [];
+  let format: OutputFormat | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg == null) {
+      continue;
+    }
+
+    if (arg === "-f" || arg === "--format") {
+      const candidate = args[index + 1];
+      const parsedFormat =
+        candidate == null ? undefined : tryParseOutputFormat(candidate);
+      if (parsedFormat != null) {
+        format = parsedFormat;
+        index += 1;
+        continue;
+      }
+    }
+
+    if (arg.startsWith("--format=")) {
+      const candidate = arg.slice("--format=".length);
+      const parsedFormat = tryParseOutputFormat(candidate);
+      if (parsedFormat != null) {
+        format = parsedFormat;
+        continue;
+      }
+    }
+
+    nextArgs.push(arg);
+  }
+
+  return format == null ? { args: nextArgs } : { args: nextArgs, format };
 }
 
 async function handle402Retry(args: {
@@ -199,20 +230,53 @@ export function createCallCommand(deps: CallDeps) {
     name: "call",
     description: "Run curl or wget against an x402-gated endpoint",
     args: {
+      listPaymentOptions: flag({
+        long: "list-payment-options",
+        description:
+          "Probe the endpoint, print accepted x402 payment options, and exit without paying",
+      }),
       paymentInfo: flag({
         long: "payment-info",
         description:
           "Print paid-call metadata and response status to stderr after a paid retry",
       }),
+      format: formatFlag,
       tool: positional({ type: string, displayName: "curl|wget" }),
       args: rest({ displayName: "args" }),
     },
-    handler: async ({ paymentInfo, tool, args: clientArgs }: CallArgs) => {
-      const { resolved } = await deps.loadRequiredConfig();
+    handler: async ({
+      listPaymentOptions,
+      paymentInfo,
+      format: formatArg,
+      tool,
+      args: clientArgs,
+    }) => {
+      const inlineFormat = listPaymentOptions
+        ? extractInlineFormatArg(clientArgs)
+        : { args: clientArgs };
       const result = await deps.runWrappedClient({
         tool,
-        args: clientArgs,
+        args: inlineFormat.args,
       });
+
+      if (listPaymentOptions) {
+        if (result.kind !== "payment-required") {
+          write402Error("server did not return an x402 payment challenge");
+          return;
+        }
+
+        const format = await resolveOutputFormat(
+          formatArg ?? inlineFormat.format,
+        );
+        const paymentRequired = await extractPaymentRequiredResponse(
+          result.response,
+          result.url,
+        );
+        printPaymentOptions(format, getPaymentOptions(paymentRequired.accepts));
+        return;
+      }
+
+      const { resolved } = await deps.loadRequiredConfig();
 
       if (result.kind === "completed") {
         writeOutcomeOutput(result);

@@ -12,6 +12,11 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { captureStdout } from "./test-helpers.js";
+import {
+  getPaymentOptions,
+  printPaymentOptions,
+} from "../src/payment/options.js";
 import {
   createBuildPaymentHandler,
   createBuildPaymentRetryHeader,
@@ -114,6 +119,182 @@ function createEvmOwsConfig() {
 }
 
 await t.test("payment signer", async (t) => {
+  await t.test(
+    "builds payment option records from accepted requirements",
+    (t) => {
+      const options = getPaymentOptions([
+        {
+          scheme: "exact",
+          network: "solana-mainnet-beta",
+          amount: "10000",
+          asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+          extra: { decimals: 6 },
+        },
+        {
+          scheme: "exact",
+          network: "base",
+          amount: "10000",
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+          extra: { decimals: 6 },
+        },
+        {
+          scheme: "exact",
+          network: "solana:unknown",
+          amount: "7",
+          asset: "unknown-asset",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+        },
+      ]);
+
+      t.same(options, [
+        {
+          asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          symbol: "USDT",
+          amount: "10000",
+          decimals: 6,
+          formattedAmount: "0.010000",
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          scheme: "exact",
+        },
+        {
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          symbol: "USDC",
+          amount: "10000",
+          decimals: 6,
+          formattedAmount: "0.010000",
+          network: "eip155:8453",
+          scheme: "exact",
+        },
+        {
+          asset: "unknown-asset",
+          symbol: null,
+          amount: "7",
+          decimals: null,
+          formattedAmount: "7",
+          network: "solana:unknown",
+          scheme: "exact",
+        },
+      ]);
+      t.end();
+    },
+  );
+
+  await t.test("prints payment options in table, json, and yaml", async (t) => {
+    const options = getPaymentOptions([
+      {
+        scheme: "exact",
+        network: "solana-mainnet-beta",
+        amount: "10000",
+        asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        payTo: "receiver",
+        maxTimeoutSeconds: 60,
+        extra: { decimals: 6 },
+      },
+    ]);
+
+    const table = await captureStdout(() =>
+      printPaymentOptions("table", options),
+    );
+    t.match(table, /Asset/);
+    t.match(table, /USDT/);
+    t.match(table, /0\.010000/);
+    t.match(table, /solana-mainnet-beta/);
+
+    const json = await captureStdout(() =>
+      printPaymentOptions("json", options),
+    );
+    t.same(JSON.parse(json), [
+      {
+        asset: "USDT",
+        address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        amount: "0.010000",
+        network: "solana-mainnet-beta",
+      },
+    ]);
+
+    const yaml = await captureStdout(() =>
+      printPaymentOptions("yaml", options),
+    );
+    t.match(yaml, /asset: USDT/);
+    t.match(yaml, /amount: "0\.010000"/);
+    t.end();
+  });
+
+  await t.test(
+    "formats known Solana asset amounts for display without challenge decimals",
+    async (t) => {
+      const options = getPaymentOptions([
+        {
+          scheme: "exact",
+          network: "solana-mainnet-beta",
+          amount: "10000",
+          asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+        },
+      ]);
+
+      const json = await captureStdout(() =>
+        printPaymentOptions("json", options),
+      );
+      t.same(JSON.parse(json), [
+        {
+          asset: "USDT",
+          address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          amount: "0.010000",
+          network: "solana-mainnet-beta",
+        },
+      ]);
+    },
+  );
+
+  await t.test(
+    "formats known EVM asset amounts and networks for display",
+    async (t) => {
+      const options = getPaymentOptions([
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "10000",
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+        },
+        {
+          scheme: "exact",
+          network: "eip155:143",
+          amount: "10000",
+          asset: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+        },
+      ]);
+
+      const json = await captureStdout(() =>
+        printPaymentOptions("json", options),
+      );
+      t.same(JSON.parse(json), [
+        {
+          asset: "USDC",
+          address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          amount: "0.010000",
+          network: "base",
+        },
+        {
+          asset: "USDC",
+          address: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+          amount: "0.010000",
+          network: "monad",
+        },
+      ]);
+    },
+  );
+
   await t.test(
     "extracts settled transaction ids from payment response headers",
     async (t) => {

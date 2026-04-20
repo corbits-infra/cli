@@ -53,6 +53,17 @@ export function formatTokenAmount(amount: string, decimals: number): string {
   return `${integerPart}.${fractionalPart}`;
 }
 
+export function formatDisplayTokenAmount(args: {
+  amount: string;
+  asset: string;
+  decimals?: number | null;
+}): string {
+  const decimals = args.decimals ?? (args.asset === "USDC" ? 6 : undefined);
+  return decimals == null
+    ? args.amount
+    : formatTokenAmount(args.amount, decimals);
+}
+
 export function tryParseJson(text: string): unknown {
   if (text.trim().length === 0) {
     return undefined;
