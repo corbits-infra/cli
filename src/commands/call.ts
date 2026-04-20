@@ -16,7 +16,7 @@ import {
   type WrappedClient,
   type WrappedRunResult,
   runWrappedClient,
-} from "./call-wrapper.js";
+} from "../process/wrapped-client.js";
 
 type CallDeps = {
   loadRequiredConfig: typeof loadRequiredConfig;
@@ -36,6 +36,39 @@ type CallArgs = {
   args: string[];
 };
 
+type ResponseStatusMetadata = {
+  status: number | null;
+};
+
+function formatResponseStatus(status: number | null): string {
+  return status == null ? "unknown" : `HTTP ${status}`;
+}
+
+function formatPaymentSummary(args: {
+  paymentInfo: PaymentMetadata;
+  responseStatus?: ResponseStatusMetadata;
+}): string {
+  const { paymentInfo, responseStatus } = args;
+  const displayDecimals = getPaymentDisplayDecimals(paymentInfo);
+  const amount =
+    displayDecimals == null
+      ? paymentInfo.amount
+      : formatTokenAmount(paymentInfo.amount, displayDecimals);
+  const parts = [
+    `Payment: ${amount} ${paymentInfo.asset} on ${paymentInfo.network}`,
+  ];
+
+  if (paymentInfo.txSignature != null) {
+    parts.push(`tx ${paymentInfo.txSignature}`);
+  }
+
+  if (responseStatus != null) {
+    parts.push(`response ${formatResponseStatus(responseStatus.status)}`);
+  }
+
+  return parts.join(", ");
+}
+
 function getPaymentDisplayDecimals(
   paymentInfo: PaymentMetadata,
 ): number | undefined {
@@ -54,29 +87,37 @@ function writeOutcomeOutput(
     { kind: "completed" } | { kind: "streamed-completed" }
   >,
   paymentInfo?: PaymentMetadata,
+  responseStatus?: ResponseStatusMetadata,
 ) {
+  const completedStderr =
+    outcome.kind === "completed" ? outcome.stderr : undefined;
+  const completedStdout =
+    outcome.kind === "completed" ? outcome.stdout : undefined;
+
   if (outcome.kind === "completed" && outcome.stderr.length > 0) {
     process.stderr.write(outcome.stderr);
   }
-  if (paymentInfo != null) {
-    const displayDecimals = getPaymentDisplayDecimals(paymentInfo);
-    const lines = [
-      "Payment:",
-      `  amount: ${
-        displayDecimals == null
-          ? paymentInfo.amount
-          : formatTokenAmount(paymentInfo.amount, displayDecimals)
-      }`,
-      `  asset: ${paymentInfo.asset}`,
-      `  network: ${paymentInfo.network}`,
-    ];
-    if (paymentInfo.txSignature != null) {
-      lines.push(`  tx_signature: ${paymentInfo.txSignature}`);
-    }
-    process.stderr.write(lines.join("\n") + "\n");
-  }
   if (outcome.kind === "completed" && outcome.stdout.length > 0) {
     process.stdout.write(outcome.stdout);
+  }
+  if (paymentInfo != null) {
+    const summary = formatPaymentSummary({
+      paymentInfo,
+      ...(responseStatus == null ? {} : { responseStatus }),
+    });
+    const separator =
+      outcome.kind === "streamed-completed"
+        ? "\n"
+        : completedStdout != null &&
+            completedStdout.length > 0 &&
+            completedStdout[completedStdout.length - 1] !== 0x0a
+          ? "\n"
+          : completedStderr != null &&
+              completedStderr.length > 0 &&
+              completedStderr[completedStderr.length - 1] !== 0x0a
+            ? "\n"
+            : "";
+    process.stderr.write(separator + summary + "\n");
   }
   process.exitCode = outcome.exitCode;
 }
@@ -136,7 +177,10 @@ async function handle402Retry(args: {
             : { txSignature: settledTransaction }),
         }
       : undefined;
-    writeOutcomeOutput(retry, paidCallInfo);
+    const responseStatus = args.printPaymentInfo
+      ? { status: retry.status }
+      : undefined;
+    writeOutcomeOutput(retry, paidCallInfo, responseStatus);
     return;
   }
 
@@ -158,7 +202,7 @@ export function createCallCommand(deps: CallDeps) {
       paymentInfo: flag({
         long: "payment-info",
         description:
-          "Print paid-call metadata to stderr after a successful retry",
+          "Print paid-call metadata and response status to stderr after a paid retry",
       }),
       tool: positional({ type: string, displayName: "curl|wget" }),
       args: rest({ displayName: "args" }),

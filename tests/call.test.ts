@@ -9,11 +9,12 @@ import { createCallCommand } from "../src/commands/call.js";
 import {
   createRunWrappedClient,
   testExports,
-} from "../src/commands/call-wrapper.js";
-import type { WrappedRunResult } from "../src/commands/call-wrapper.js";
+} from "../src/process/wrapped-client.js";
+import type { WrappedRunResult } from "../src/process/wrapped-client.js";
 import type { LoadedConfig } from "../src/config/index.js";
 import type { PreflightBalanceDeps } from "../src/payment/balance.js";
 import {
+  captureCombinedOutput,
   captureStderr,
   captureStdout,
   captureStdoutBytes,
@@ -67,6 +68,7 @@ function createLoadedConfig(): LoadedConfig {
 
 function createCompletedResult(args: {
   exitCode: number;
+  status?: number | null;
   stdout: string;
   stderr: string;
   headers?: Record<string, string>;
@@ -74,6 +76,7 @@ function createCompletedResult(args: {
   return {
     kind: "completed",
     exitCode: args.exitCode,
+    status: args.status ?? 200,
     stdout: Buffer.from(args.stdout),
     stderr: Buffer.from(args.stderr),
     headers: new Headers(args.headers),
@@ -82,11 +85,13 @@ function createCompletedResult(args: {
 
 function createStreamedCompletedResult(args: {
   exitCode: number;
+  status?: number | null;
   headers?: Record<string, string>;
 }): Extract<WrappedRunResult, { kind: "streamed-completed" }> {
   return {
     kind: "streamed-completed",
     exitCode: args.exitCode,
+    status: args.status ?? 200,
     headers: new Headers(args.headers),
   };
 }
@@ -163,11 +168,13 @@ function createWrapperDeps(
       data: string | Uint8Array,
       encoding?: BufferEncoding,
     ) => Promise<void>;
+    rename?: (sourcePath: string, destinationPath: string) => Promise<void>;
     readBinaryFile?: (filePath: string) => Promise<Uint8Array>;
     readTextFile?: (
       filePath: string,
       encoding: BufferEncoding,
     ) => Promise<string>;
+    fetch?: typeof globalThis.fetch;
   } = {},
 ) {
   return {
@@ -193,7 +200,9 @@ function createWrapperDeps(
     readBinaryFile: args.readBinaryFile ?? fs.readFile,
     readTextFile: args.readTextFile ?? fs.readFile,
     writeFile: args.writeFile ?? fs.writeFile,
+    rename: args.rename ?? fs.rename,
     rm: fs.rm,
+    ...(args.fetch == null ? {} : { fetch: args.fetch }),
     ...(args.spawn == null ? {} : { spawn: args.spawn }),
   };
 }
@@ -253,6 +262,20 @@ await t.test("call wrapper helpers", async (t) => {
         '{"ok":true}',
       );
 
+      const repeatedDataRequest = await testExports.parseWrappedRequestInfo(
+        {
+          readBinaryFile: async () => Buffer.from("unused"),
+        },
+        "curl",
+        ["-d", "a=1", "--data-binary=two", "https://example.com/items"],
+      );
+      t.equal(
+        Buffer.from(
+          repeatedDataRequest.requestInit.body as Uint8Array,
+        ).toString(),
+        "a=1&two",
+      );
+
       const wgetRequest = await testExports.parseWrappedRequestInfo(
         {
           readBinaryFile: async () => Buffer.from("unused"),
@@ -263,6 +286,29 @@ await t.test("call wrapper helpers", async (t) => {
       t.equal(wgetRequest.url, "https://example.com/items");
       t.equal(wgetRequest.requestInit.method, "POST");
       t.equal(wgetRequest.requestInit.body, "hello");
+    },
+  );
+
+  await t.test(
+    "parses wrapped request headers for curl and wget",
+    async (t) => {
+      const curlHeaders = testExports.parseWrappedRequestHeaders("curl", [
+        "-H",
+        "Content-Type: application/json",
+        "--header=X-Runway-Version: 2024-11-06",
+        "https://example.com/items",
+      ]);
+      t.equal(curlHeaders.get("content-type"), "application/json");
+      t.equal(curlHeaders.get("x-runway-version"), "2024-11-06");
+
+      const wgetHeaders = testExports.parseWrappedRequestHeaders("wget", [
+        "--header",
+        "Content-Type: application/json",
+        "--header=X-Trace-Id: 123",
+        "https://example.com/items",
+      ]);
+      t.equal(wgetHeaders.get("content-type"), "application/json");
+      t.equal(wgetHeaders.get("x-trace-id"), "123");
     },
   );
 
@@ -327,7 +373,7 @@ await t.test("call wrapper helpers", async (t) => {
   });
 
   await t.test(
-    "detects curl multi-transfer and wget server flags",
+    "detects curl multi-transfer and wget response flags",
     async (t) => {
       t.equal(testExports.hasCurlNextFlag(["--next"]), true);
       t.equal(testExports.hasCurlNextFlag(["https://example.com"]), false);
@@ -337,7 +383,15 @@ await t.test("call wrapper helpers", async (t) => {
         true,
       );
       t.equal(
+        testExports.hasWgetContentOnErrorFlag(["--content-on-error"]),
+        true,
+      );
+      t.equal(
         testExports.hasWgetServerResponseFlag(["https://example.com"]),
+        false,
+      );
+      t.equal(
+        testExports.hasWgetContentOnErrorFlag(["https://example.com"]),
         false,
       );
     },
@@ -381,14 +435,8 @@ await t.test("wrapped client runner", async (t) => {
     const calls: { file: string; args: string[] }[] = [];
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
-        execFile: async (file, args) => {
-          calls.push({ file, args });
-          return {
-            stdout: Buffer.from(`/usr/bin/${args[0]}\n`),
-            stderr: Buffer.from(""),
-          };
-        },
         spawn: createSpawnStub({
+          stdout: Buffer.from("paid body"),
           onSpawn: (file, spawnedArgs) => {
             calls.push({ file, args: spawnedArgs });
           },
@@ -402,11 +450,41 @@ await t.test("wrapped client runner", async (t) => {
       extraHeader: { name: "X-PAYMENT", value: "paid-header" },
     });
 
-    t.same(calls[1]?.file, "curl");
-    t.match(calls[1]?.args ?? [], [
+    t.same(calls[0]?.file, "curl");
+    t.match(calls[0]?.args ?? [], [
       "https://example.com",
       "-H",
       "X-PAYMENT: paid-header",
+    ]);
+  });
+
+  await t.test("injects V2 curl retry headers on second pass", async (t) => {
+    const tempDir = t.testdir();
+    const calls: { file: string; args: string[] }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        spawn: createSpawnStub({
+          stdout: Buffer.from("paid body"),
+          onSpawn: (file, spawnedArgs) => {
+            calls.push({ file, args: spawnedArgs });
+          },
+        }),
+      }),
+    );
+
+    await runWrappedClient({
+      tool: "curl",
+      args: ["https://example.com"],
+      extraHeader: {
+        name: "PAYMENT-SIGNATURE",
+        value: "paid-signature",
+      },
+    });
+
+    t.match(calls[0]?.args ?? [], [
+      "https://example.com",
+      "-H",
+      "PAYMENT-SIGNATURE: paid-signature",
     ]);
   });
 
@@ -415,14 +493,8 @@ await t.test("wrapped client runner", async (t) => {
     const calls: { file: string; args: string[] }[] = [];
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
-        execFile: async (file, args) => {
-          calls.push({ file, args });
-          return {
-            stdout: Buffer.from(`/usr/bin/${args[0]}\n`),
-            stderr: Buffer.from(""),
-          };
-        },
         spawn: createSpawnStub({
+          stdout: Buffer.from("paid body"),
           onSpawn: (file, spawnedArgs) => {
             calls.push({ file, args: spawnedArgs });
           },
@@ -436,7 +508,7 @@ await t.test("wrapped client runner", async (t) => {
       extraHeader: { name: "X-PAYMENT", value: "paid-header" },
     });
 
-    t.match(calls[1]?.args ?? [], [
+    t.match(calls[0]?.args ?? [], [
       "https://example.com",
       "-H",
       "Cookie: a=1",
@@ -478,9 +550,17 @@ await t.test("wrapped client runner", async (t) => {
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
-          stdout: Buffer.from("downloaded body"),
           stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
         }),
+        readBinaryFile: async (filePath) => {
+          if (filePath.endsWith("stdout.txt")) {
+            return Buffer.from("downloaded body");
+          }
+          if (filePath.endsWith("stderr.txt")) {
+            return Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n");
+          }
+          return new Uint8Array();
+        },
       }),
     );
 
@@ -492,6 +572,7 @@ await t.test("wrapped client runner", async (t) => {
     t.same(result, {
       kind: "completed",
       exitCode: 0,
+      status: 200,
       stdout: Buffer.from("downloaded body"),
       stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
       headers: new Headers({ "content-length": "14" }),
@@ -506,9 +587,17 @@ await t.test("wrapped client runner", async (t) => {
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
-            stdout: largeBody,
             stderr: Buffer.from("HTTP/1.1 200 OK\n"),
           }),
+          readBinaryFile: async (filePath) => {
+            if (filePath.endsWith("stdout.txt")) {
+              return largeBody;
+            }
+            if (filePath.endsWith("stderr.txt")) {
+              return Buffer.from("HTTP/1.1 200 OK\n");
+            }
+            return new Uint8Array();
+          },
         }),
       );
 
@@ -524,43 +613,245 @@ await t.test("wrapped client runner", async (t) => {
     },
   );
 
+  await t.test("preserves wget stdout semantics for -O-", async (t) => {
+    const tempDir = t.testdir();
+    const writes: { path: string; data: string }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        spawn: createSpawnStub({
+          stdout: Buffer.from("downloaded body"),
+          stderr: Buffer.from("HTTP/1.1 200 OK\n"),
+        }),
+        writeFile: async (filePath, data) => {
+          writes.push({
+            path: filePath,
+            data:
+              typeof data === "string" ? data : Buffer.from(data).toString(),
+          });
+        },
+      }),
+    );
+
+    const result = await runWrappedClient({
+      tool: "wget",
+      args: ["-O-", "https://example.com"],
+    });
+
+    t.equal(result.kind, "completed");
+    if (result.kind === "completed") {
+      t.equal(result.stdout.toString(), "downloaded body");
+    }
+    t.same(writes, []);
+  });
+
   await t.test(
-    "injects wget server-response flag for 402 detection",
+    "preserves wget stdout semantics when no output file is provided",
     async (t) => {
       const tempDir = t.testdir();
-      const calls: { file: string; args: string[] }[] = [];
+      const writes: { path: string; data: string }[] = [];
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
-          execFile: async (file, args) => {
-            calls.push({ file, args });
-            return {
-              stdout: Buffer.from(`/usr/bin/${args[0]}\n`),
-              stderr: Buffer.from(""),
-            };
-          },
           spawn: createSpawnStub({
             stdout: Buffer.from("downloaded body"),
-            stderr: Buffer.from(
-              "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
-            ),
-            onSpawn: (file, spawnedArgs) => {
-              calls.push({ file, args: spawnedArgs });
-            },
+            stderr: Buffer.from("HTTP/1.1 200 OK\n"),
           }),
+          writeFile: async (filePath, data) => {
+            writes.push({
+              path: filePath,
+              data:
+                typeof data === "string" ? data : Buffer.from(data).toString(),
+            });
+          },
         }),
       );
 
-      await runWrappedClient({
+      const result = await runWrappedClient({
         tool: "wget",
         args: ["https://example.com"],
       });
 
-      t.same(calls[1], {
-        file: "wget",
-        args: ["--server-response", "https://example.com"],
-      });
+      t.equal(result.kind, "completed");
+      if (result.kind === "completed") {
+        t.equal(result.stdout.toString(), "downloaded body");
+      }
+      t.same(writes, []);
     },
   );
+
+  await t.test("renames successful wget file outputs into place", async (t) => {
+    const tempDir = t.testdir();
+    const renames: { source: string; destination: string }[] = [];
+    const writes: { path: string; data: string }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        spawn: createSpawnStub({
+          stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
+        }),
+        readBinaryFile: async (filePath) => {
+          if (filePath.endsWith("body.bin")) {
+            return Buffer.from("downloaded body");
+          }
+          if (filePath.endsWith("stderr.txt")) {
+            return Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n");
+          }
+          return new Uint8Array();
+        },
+        rename: async (source, destination) => {
+          renames.push({ source, destination });
+        },
+        writeFile: async (filePath, data) => {
+          writes.push({
+            path: filePath,
+            data:
+              typeof data === "string" ? data : Buffer.from(data).toString(),
+          });
+        },
+      }),
+    );
+
+    const result = await runWrappedClient({
+      tool: "wget",
+      args: ["-O", "/tmp/output.json", "https://example.com"],
+    });
+
+    t.equal(result.kind, "completed");
+    if (result.kind === "completed") {
+      t.equal(result.stdout.length, 0);
+    }
+    t.same(writes, []);
+    t.equal(renames.length, 1);
+    t.match(renames[0], {
+      source: /body\.bin$/,
+      destination: "/tmp/output.json",
+    });
+  });
+
+  await t.test("preserves wget args and stderr on paid retries", async (t) => {
+    const tempDir = t.testdir();
+    const calls: { file: string; args: string[] }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        spawn: createSpawnStub({
+          stdout: Buffer.from("downloaded body"),
+          stderr: Buffer.from("HTTP/1.1 200 OK\nX-Test: paid\n"),
+          onSpawn: (file, spawnedArgs) => {
+            calls.push({ file, args: spawnedArgs });
+          },
+        }),
+      }),
+    );
+
+    await runWrappedClient({
+      tool: "wget",
+      args: [
+        "--header",
+        "Content-Type: application/json",
+        "--post-data=hello",
+        "https://example.com",
+      ],
+      extraHeader: {
+        name: "X-PAYMENT",
+        value: "paid",
+      },
+    });
+
+    t.same(calls[0]?.file, "wget");
+    t.match(calls[0]?.args ?? [], [
+      "--header",
+      "X-PAYMENT: paid",
+      "--content-on-error",
+      "--server-response",
+      "--header",
+      "Content-Type: application/json",
+      "--post-data=hello",
+      "https://example.com",
+      "-O",
+      "-",
+    ]);
+  });
+
+  await t.test(
+    "streams wget retry output to stdout without buffering",
+    async (t) => {
+      const tempDir = t.testdir();
+      const runWrappedClient = createRunWrappedClient(
+        createWrapperDeps(tempDir, {
+          spawn: createSpawnStub({
+            stdout: Buffer.from("paid body"),
+          }),
+        }),
+      );
+
+      const stdout = await captureStdoutBytes(() =>
+        runWrappedClient({
+          tool: "wget",
+          args: ["https://example.com"],
+          extraHeader: { name: "X-PAYMENT", value: "paid" },
+          streamOutput: true,
+        }).then(() => undefined),
+      );
+      const stderr = await captureStderr(() =>
+        runWrappedClient({
+          tool: "wget",
+          args: ["https://example.com"],
+          extraHeader: { name: "X-PAYMENT", value: "paid" },
+          streamOutput: true,
+        }).then(() => undefined),
+      );
+
+      t.equal(Buffer.from(stdout).toString("utf8"), "paid body");
+      t.equal(stderr, "");
+    },
+  );
+
+  await t.test("preserves curl flags on paid retries", async (t) => {
+    const tempDir = t.testdir();
+    const calls: { file: string; args: string[] }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        spawn: createSpawnStub({
+          stdout: Buffer.from('{"ok":true}'),
+          onSpawn: (file, spawnedArgs) => {
+            calls.push({ file, args: spawnedArgs });
+          },
+        }),
+      }),
+    );
+
+    await runWrappedClient({
+      tool: "curl",
+      args: [
+        "-L",
+        "--compressed",
+        "-u",
+        "alice:secret",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        '{"ok":true}',
+        "https://example.com",
+      ],
+      extraHeader: {
+        name: "X-PAYMENT",
+        value: "paid",
+      },
+    });
+
+    t.same(calls[0]?.file, "curl");
+    t.match(calls[0]?.args ?? [], [
+      "-L",
+      "--compressed",
+      "-u",
+      "alice:secret",
+      "-H",
+      "Content-Type: application/json",
+      "-d",
+      '{"ok":true}',
+      "https://example.com",
+      "-H",
+      "X-PAYMENT: paid",
+    ]);
+  });
 
   await t.test("rejects wget multi-url passthrough args", async (t) => {
     const tempDir = t.testdir();
@@ -708,11 +999,21 @@ await t.test("wrapped client runner", async (t) => {
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
-            stdout: Buffer.from(challengeBody),
             stderr: Buffer.from(
               "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
             ),
           }),
+          readBinaryFile: async (filePath) => {
+            if (filePath.endsWith("stdout.txt")) {
+              return Buffer.from(challengeBody);
+            }
+            if (filePath.endsWith("stderr.txt")) {
+              return Buffer.from(
+                "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
+              );
+            }
+            return new Uint8Array();
+          },
         }),
       );
 
@@ -739,11 +1040,21 @@ await t.test("wrapped client runner", async (t) => {
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
-          stdout: Buffer.from(challengeBody),
           stderr: Buffer.from(
             "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
           ),
         }),
+        readBinaryFile: async (filePath) => {
+          if (filePath.endsWith("body.bin")) {
+            return Buffer.from(challengeBody);
+          }
+          if (filePath.endsWith("stderr.txt")) {
+            return Buffer.from(
+              "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
+            );
+          }
+          return new Uint8Array();
+        },
       }),
     );
 
@@ -759,18 +1070,60 @@ await t.test("wrapped client runner", async (t) => {
     }
   });
 
+  await t.test(
+    "preserves wget 402 challenge bodies when output-document is set",
+    async (t) => {
+      const tempDir = t.testdir();
+      const challengeBody = JSON.stringify({
+        x402Version: 1,
+        accepts: [{ scheme: "exact" }],
+      });
+      const runWrappedClient = createRunWrappedClient(
+        createWrapperDeps(tempDir, {
+          spawn: createSpawnStub({
+            stderr: Buffer.from(
+              "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
+            ),
+          }),
+          readBinaryFile: async (filePath) => {
+            if (filePath.endsWith("body.bin")) {
+              return Buffer.from(challengeBody);
+            }
+            if (filePath.endsWith("stderr.txt")) {
+              return Buffer.from(
+                "HTTP/1.1 402 Payment Required\nContent-Type: application/json\n",
+              );
+            }
+            return new Uint8Array();
+          },
+        }),
+      );
+
+      const result = await runWrappedClient({
+        tool: "wget",
+        args: ["-O", "/tmp/out.json", "https://example.com"],
+      });
+
+      t.equal(result.kind, "payment-required");
+      if (result.kind === "payment-required") {
+        t.equal(await result.response.text(), challengeBody);
+        t.equal(result.url, "https://example.com");
+        t.same(result.requestInit, { method: "GET" });
+      }
+    },
+  );
+
   await t.test("streams retry output for curl without buffering", async (t) => {
     const tempDir = t.testdir();
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
-          stdout: "paid body",
-          stderr: "progress",
+          stdout: Buffer.from("paid body"),
         }),
       }),
     );
 
-    const stdout = await captureStdout(() =>
+    const stdout = await captureStdoutBytes(() =>
       runWrappedClient({
         tool: "curl",
         args: ["https://example.com"],
@@ -787,8 +1140,8 @@ await t.test("wrapped client runner", async (t) => {
       }).then(() => undefined),
     );
 
-    t.equal(stdout, "paid body");
-    t.equal(stderr, "progress");
+    t.equal(Buffer.from(stdout).toString("utf8"), "paid body");
+    t.equal(stderr, "");
   });
 
   await t.test(
@@ -799,8 +1152,9 @@ await t.test("wrapped client runner", async (t) => {
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
-            stdout: "paid body",
+            stdout: Buffer.from("paid body"),
           }),
+          readTextFile: async () => "HTTP/1.1 200\r\nx-test: paid\r\n\r\n",
           writeFile: async (filePath, data) => {
             writes.push({
               path: filePath,
@@ -811,7 +1165,7 @@ await t.test("wrapped client runner", async (t) => {
         }),
       );
 
-      const stdout = await captureStdout(() =>
+      const stdout = await captureStdoutBytes(() =>
         runWrappedClient({
           tool: "curl",
           args: ["--dump-header=/tmp/headers.txt", "https://example.com"],
@@ -820,8 +1174,13 @@ await t.test("wrapped client runner", async (t) => {
         }).then(() => undefined),
       );
 
-      t.equal(stdout, "paid body");
-      t.same(writes, [{ path: "/tmp/headers.txt", data: "" }]);
+      t.equal(Buffer.from(stdout).toString("utf8"), "paid body");
+      t.same(writes, [
+        {
+          path: "/tmp/headers.txt",
+          data: "HTTP/1.1 200\r\nx-test: paid\r\n\r\n",
+        },
+      ]);
     },
   );
 
@@ -830,21 +1189,19 @@ await t.test("wrapped client runner", async (t) => {
     async (t) => {
       const tempDir = t.testdir();
       let seenHeaderPath: string | undefined;
-      let seenEncoding: BufferEncoding | undefined;
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
-            stdout: "paid body",
+            stdout: Buffer.from("paid body"),
           }),
-          readTextFile: async (filePath, encoding) => {
+          readTextFile: async () => "HTTP/1.1 200\r\nx-test: paid\r\n\r\n",
+          writeFile: async (filePath) => {
             seenHeaderPath = filePath;
-            seenEncoding = encoding;
-            return "HTTP/1.1 200 OK\r\nX-Test: paid\r\n\r\n";
           },
         }),
       );
 
-      const stdout = await captureStdout(() =>
+      const stdout = await captureStdoutBytes(() =>
         runWrappedClient({
           tool: "curl",
           args: ["-D", "-", "https://example.com"],
@@ -853,9 +1210,11 @@ await t.test("wrapped client runner", async (t) => {
         }).then(() => undefined),
       );
 
-      t.match(seenHeaderPath ?? "", /headers\.txt$/);
-      t.equal(seenEncoding, "utf8");
-      t.equal(stdout, "HTTP/1.1 200 OK\r\nX-Test: paid\r\n\r\npaid body");
+      t.equal(seenHeaderPath, undefined);
+      t.equal(
+        Buffer.from(stdout).toString("utf8"),
+        "HTTP/1.1 200\r\nx-test: paid\r\n\r\npaid body",
+      );
     },
   );
 });
@@ -973,6 +1332,70 @@ await t.test("call command", async (t) => {
   );
 
   await t.test(
+    "retries V2 402 requests with generated payment signature header",
+    async (t) => {
+      const invocations: unknown[] = [];
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 2,
+          header: {
+            name: "PAYMENT-SIGNATURE",
+            value: "paid-v2",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          invocations.push(args);
+          if (invocations.length === 1) {
+            return createPaymentRequiredResult({
+              tool: "curl",
+              url: "https://example.com",
+              requestInit: {
+                method: "POST",
+                body: '{"x":1}',
+              },
+              response: new Response("", {
+                status: 402,
+                headers: {
+                  "payment-required": "challenge",
+                },
+              }),
+            });
+          }
+
+          return createStreamedCompletedResult({
+            exitCode: 0,
+            headers: {},
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        paymentInfo: false,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.same(invocations[1], {
+        tool: "curl",
+        args: ["https://example.com"],
+        extraHeader: {
+          name: "PAYMENT-SIGNATURE",
+          value: "paid-v2",
+        },
+        streamOutput: true,
+      });
+    },
+  );
+
+  await t.test(
     "prints payment metadata to stderr only when payment-info is enabled",
     async (t) => {
       const call = createCallCommand({
@@ -1026,13 +1449,121 @@ await t.test("call command", async (t) => {
         }),
       );
 
-      t.match(stderr, /Payment:/);
-      t.match(stderr, /amount: 0\.001000/);
-      t.match(stderr, /asset: USDC/);
-      t.match(stderr, /network: solana-devnet/);
-      t.match(stderr, /tx_signature: sig-123/);
+      t.match(
+        stderr,
+        /Payment: 0\.001000 USDC on solana-devnet, tx sig-123, response HTTP 200/,
+      );
       t.notMatch(stderr, /response_headers:/);
       t.notMatch(stderr, /payment-response:/);
+    },
+  );
+
+  await t.test(
+    "prints payment metadata on the next line after stderr without a trailing newline",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            return createCompletedResult({
+              exitCode: 0,
+              stdout: "paid response",
+              stderr: "upstream warning",
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(() =>
+        call.handler({
+          paymentInfo: true,
+          tool: "curl",
+          args: ["https://example.com"],
+        }),
+      );
+
+      t.match(
+        stderr,
+        /^upstream warning\nPayment: 0\.001000 USDC on solana-devnet, response HTTP 200\n/m,
+      );
+    },
+  );
+
+  await t.test(
+    "prints payment metadata on the next line after streamed stdout without a trailing newline",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            process.stdout.write('{"ok":true}');
+            return createStreamedCompletedResult({
+              exitCode: 0,
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const output = await captureCombinedOutput(() =>
+        call.handler({
+          paymentInfo: true,
+          tool: "curl",
+          args: ["https://example.com"],
+        }),
+      );
+
+      t.match(
+        output,
+        /\{"ok":true\}\nPayment: 0\.001000 USDC on solana-devnet, response HTTP 200\n/,
+      );
     },
   );
 
@@ -1082,9 +1613,68 @@ await t.test("call command", async (t) => {
         }),
       );
 
-      t.match(stderr, /Payment:/);
-      t.notMatch(stderr, /tx_signature:/);
+      t.match(
+        stderr,
+        /Payment: 0\.001000 USDC on solana-devnet, response HTTP 200/,
+      );
+      t.notMatch(stderr, /tx /);
       t.notMatch(stderr, /response_headers:/);
+    },
+  );
+
+  await t.test(
+    "prints payment metadata and HTTP error status when the paid retry returns an HTTP error",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            return createCompletedResult({
+              exitCode: 0,
+              status: 400,
+              stdout: '{"error":"bad request"}',
+              stderr: "",
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const output = await captureCombinedOutput(() =>
+        call.handler({
+          paymentInfo: true,
+          tool: "curl",
+          args: ["https://example.com"],
+        }),
+      );
+
+      t.match(
+        output,
+        /\{"error":"bad request"\}\nPayment: 0\.001000 USDC on solana-devnet, response HTTP 400/,
+      );
     },
   );
 
@@ -1152,6 +1742,7 @@ await t.test("call command", async (t) => {
         runWrappedClient: async () => ({
           kind: "completed",
           exitCode: 0,
+          status: 200,
           stdout: Uint8Array.from([0x00, 0xff, 0x80, 0x41]),
           stderr: new Uint8Array(),
           headers: new Headers(),

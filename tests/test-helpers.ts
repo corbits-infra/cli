@@ -109,6 +109,46 @@ export function captureStderr(fn: () => void | Promise<void>): Promise<string> {
   return Promise.resolve(captured);
 }
 
+export function captureCombinedOutput(
+  fn: () => void | Promise<void>,
+): Promise<string> {
+  const originalStdout = process.stdout.write.bind(process.stdout);
+  const originalStderr = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  const capture = (chunk: string | Uint8Array) => {
+    captured +=
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  };
+  process.stdout.write = capture as typeof process.stdout.write;
+  process.stderr.write = capture as typeof process.stderr.write;
+  let result: void | Promise<void>;
+  try {
+    result = fn();
+  } catch (err) {
+    process.stdout.write = originalStdout;
+    process.stderr.write = originalStderr;
+    throw err;
+  }
+  if (result instanceof Promise) {
+    return result.then(
+      () => {
+        process.stdout.write = originalStdout;
+        process.stderr.write = originalStderr;
+        return captured;
+      },
+      (err: unknown) => {
+        process.stdout.write = originalStdout;
+        process.stderr.write = originalStderr;
+        throw err;
+      },
+    );
+  }
+  process.stdout.write = originalStdout;
+  process.stderr.write = originalStderr;
+  return Promise.resolve(captured);
+}
+
 export function withTempConfigHome(test: {
   teardown(fn: () => Promise<void>): void;
 }): string {
