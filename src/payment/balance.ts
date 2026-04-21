@@ -1,10 +1,13 @@
 import { Connection, PublicKey } from "@solana/web3.js";
+import {
+  getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 import { createPublicClient, http, isAddress, type PublicClient } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { erc20 } from "@faremeter/payment-evm";
-import { lookupX402Network } from "@faremeter/info/evm";
-import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
 import { lookupKnownAsset } from "@faremeter/info/evm";
+import { lookupKnownSPLToken } from "@faremeter/info/solana";
 import { ConfigError } from "../config/index.js";
 import type { PaymentNetwork, ResolvedConfig } from "../config/index.js";
 import {
@@ -13,12 +16,18 @@ import {
   getPaymentNetworkDefaults,
 } from "../config/schema.js";
 import { formatTokenAmount } from "../output/format.js";
+import { getEvmChainInfoForNetwork } from "./networks.js";
 import {
-  getEvmChainInfoForNetwork,
-  getSolanaClusterForNetwork,
-} from "./networks.js";
-import { extractPaymentRequiredResponse } from "./signer.js";
+  resolveKnownPaymentAsset,
+  type KnownPaymentAssetDetails,
+} from "./requirements.js";
+import {
+  extractPaymentRequiredResponse,
+  formatPaymentRequirementMismatch,
+  selectPaymentRequirement,
+} from "./signer.js";
 import type { WrappedRunResult } from "../process/wrapped-client.js";
+import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@faremeter/types/x402v2";
 
 const USDC_DECIMALS = 6;
 
@@ -31,7 +40,8 @@ export type BalanceLookupTarget = {
 export type BalanceRecord = {
   address: string;
   network: string;
-  asset: "USDC";
+  asset: string;
+  assetAddress: string;
   amount: string;
 };
 
@@ -55,29 +65,35 @@ export type PreflightBalanceDeps = BalanceDeps & {
   parseRequirements: (
     response: Response,
     url: string,
-  ) => Promise<{ accepts: { network: string; amount: string }[] }>;
+  ) => Promise<{ accepts: x402PaymentRequirementsV2[] }>;
+  solanaTokenAccountExists: (
+    rpcUrl: string,
+    mint: string,
+    owner: string,
+    tokenProgram?: string,
+  ) => Promise<boolean>;
 };
 
 async function resolveSolanaBalance(
   target: BalanceLookupTarget,
+  asset: KnownPaymentAssetDetails,
   deps: BalanceDeps,
 ): Promise<BalanceResolution> {
-  const cluster = getSolanaClusterForNetwork(target.network);
-  const tokenInfo = deps.lookupKnownSPLToken(cluster, "USDC");
-  if (tokenInfo == null) {
-    throw new ConfigError(`No known USDC mint for Solana cluster ${cluster}`);
-  }
   const rawAmount = await deps.getSolanaTokenBalance(
     target.rpcUrl,
-    tokenInfo.address,
+    asset.asset,
     target.address,
   );
   return {
     record: {
       address: target.address,
       network: formatPaymentNetworkDisplay(target.network),
-      asset: "USDC",
-      amount: formatTokenAmount(String(rawAmount), USDC_DECIMALS),
+      asset: asset.symbol,
+      assetAddress: asset.asset,
+      amount: formatTokenAmount(
+        String(rawAmount),
+        asset.decimals ?? USDC_DECIMALS,
+      ),
     },
     rawAmount,
   };
@@ -85,26 +101,22 @@ async function resolveSolanaBalance(
 
 async function resolveEvmBalance(
   target: BalanceLookupTarget,
+  asset: KnownPaymentAssetDetails,
   deps: BalanceDeps,
 ): Promise<BalanceResolution> {
   const chainInfo = getEvmChainInfoForNetwork(target.network);
-  const assetInfo = deps.lookupKnownAsset(chainInfo.id, "USDC");
-  if (assetInfo == null) {
-    throw new ConfigError(
-      `No known USDC asset for EVM network ${target.network}`,
-    );
-  }
   const client = deps.getEvmPublicClient(target.rpcUrl, chainInfo.id);
   const result = await erc20.getTokenBalance({
     account: target.address as `0x${string}`,
-    asset: assetInfo.address,
+    asset: asset.asset as `0x${string}`,
     client,
   });
   return {
     record: {
       address: target.address,
       network: formatPaymentNetworkDisplay(target.network),
-      asset: "USDC",
+      asset: asset.symbol,
+      assetAddress: asset.asset,
       amount: formatTokenAmount(String(result.amount), result.decimals),
     },
     rawAmount: result.amount,
@@ -113,30 +125,32 @@ async function resolveEvmBalance(
 
 function resolveByFamily(
   target: BalanceLookupTarget,
+  asset: KnownPaymentAssetDetails,
   deps: BalanceDeps,
 ): Promise<BalanceResolution> {
   const { family } = getPaymentNetworkContext(target.network);
   return family === "solana"
-    ? resolveSolanaBalance(target, deps)
-    : resolveEvmBalance(target, deps);
+    ? resolveSolanaBalance(target, asset, deps)
+    : resolveEvmBalance(target, asset, deps);
+}
+
+export async function resolveAssetBalance(
+  target: BalanceLookupTarget,
+  asset: KnownPaymentAssetDetails,
+  deps: BalanceDeps,
+): Promise<BalanceRecord> {
+  return (await resolveByFamily(target, asset, deps)).record;
 }
 
 export async function resolveUsdcBalance(
   target: BalanceLookupTarget,
   deps: BalanceDeps,
 ): Promise<BalanceRecord> {
-  return (await resolveByFamily(target, deps)).record;
-}
-
-function findMatchingRequirementAmount(
-  accepts: { network: string; amount: string }[],
-  network: PaymentNetwork,
-): string | null {
-  const configuredNetwork =
-    getPaymentNetworkContext(network).family === "solana"
-      ? clusterToCAIP2(getSolanaClusterForNetwork(network)).caip2
-      : lookupX402Network(getEvmChainInfoForNetwork(network).id);
-  return accepts.find((r) => r.network === configuredNetwork)?.amount ?? null;
+  return resolveAssetBalance(
+    target,
+    resolveKnownPaymentAsset(target.network, "USDC"),
+    deps,
+  );
 }
 
 export async function checkPreflightBalance(
@@ -148,12 +162,12 @@ export async function checkPreflightBalance(
     firstAttempt.response.clone(),
     firstAttempt.url,
   );
-  const requiredRaw = findMatchingRequirementAmount(
+  const selection = selectPaymentRequirement({
     accepts,
-    config.payment.network,
-  );
-  if (requiredRaw == null) {
-    return;
+    config,
+  });
+  if (selection.kind !== "selected") {
+    throw new Error(formatPaymentRequirementMismatch(config, selection));
   }
 
   const target: BalanceLookupTarget = {
@@ -162,11 +176,58 @@ export async function checkPreflightBalance(
     rpcUrl: config.payment.rpcUrl,
   };
 
-  const { record, rawAmount } = await resolveByFamily(target, deps);
-  if (rawAmount < BigInt(requiredRaw)) {
-    const requiredFormatted = formatTokenAmount(requiredRaw, USDC_DECIMALS);
+  const requiredRaw = selection.selected.requirement.amount;
+  const { family } = getPaymentNetworkContext(target.network);
+  if (family === "solana") {
+    const tokenProgram =
+      typeof selection.selected.requirement.extra === "object" &&
+      selection.selected.requirement.extra != null &&
+      "tokenProgram" in selection.selected.requirement.extra &&
+      typeof selection.selected.requirement.extra.tokenProgram === "string"
+        ? selection.selected.requirement.extra.tokenProgram
+        : undefined;
+    const receiverAccountExists = await deps.solanaTokenAccountExists(
+      target.rpcUrl,
+      selection.selected.asset,
+      selection.selected.requirement.payTo,
+      tokenProgram,
+    );
+    if (!receiverAccountExists) {
+      throw new Error(
+        `Endpoint advertises ${selection.selected.symbol ?? selection.selected.asset} on ${formatPaymentNetworkDisplay(target.network)}, but the receiver token account is not initialized yet`,
+      );
+    }
+  }
+
+  const balance =
+    family === "solana"
+      ? await deps.getSolanaTokenBalance(
+          target.rpcUrl,
+          selection.selected.asset,
+          target.address,
+        )
+      : (
+          await erc20.getTokenBalance({
+            account: target.address as `0x${string}`,
+            asset: selection.selected.asset as `0x${string}`,
+            client: deps.getEvmPublicClient(
+              target.rpcUrl,
+              getEvmChainInfoForNetwork(target.network).id,
+            ),
+          })
+        ).amount;
+
+  if (balance < BigInt(requiredRaw)) {
+    const requiredFormatted = formatTokenAmount(
+      requiredRaw,
+      selection.selected.decimals ?? USDC_DECIMALS,
+    );
+    const haveFormatted = formatTokenAmount(
+      String(balance),
+      selection.selected.decimals ?? USDC_DECIMALS,
+    );
     throw new Error(
-      `Insufficient USDC balance (have ${record.amount}, endpoint costs ${requiredFormatted})`,
+      `Insufficient ${selection.selected.symbol ?? selection.selected.asset} balance (have ${haveFormatted}, endpoint costs ${requiredFormatted})`,
     );
   }
 }
@@ -227,6 +288,22 @@ async function getSolanaTokenBalanceDefault(
   }, 0n);
 }
 
+async function solanaTokenAccountExistsDefault(
+  rpcUrl: string,
+  mint: string,
+  owner: string,
+  tokenProgram?: string,
+): Promise<boolean> {
+  const connection = new Connection(rpcUrl, "confirmed");
+  const account = getAssociatedTokenAddressSync(
+    new PublicKey(mint),
+    new PublicKey(owner),
+    true,
+    tokenProgram == null ? TOKEN_PROGRAM_ID : new PublicKey(tokenProgram),
+  );
+  return (await connection.getAccountInfo(account)) != null;
+}
+
 const EVM_CHAINS: Record<
   number,
   Parameters<typeof createPublicClient>[0]["chain"]
@@ -256,4 +333,5 @@ export const defaultBalanceDeps: BalanceDeps = {
 export const defaultPreflightBalanceDeps: PreflightBalanceDeps = {
   ...defaultBalanceDeps,
   parseRequirements: extractPaymentRequiredResponse,
+  solanaTokenAccountExists: solanaTokenAccountExistsDefault,
 };

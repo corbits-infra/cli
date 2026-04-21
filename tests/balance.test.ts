@@ -5,18 +5,21 @@ import { createBalanceCommand } from "../src/commands/balance.js";
 import {
   checkPreflightBalance,
   buildTargetFromOverrides,
+  resolveAssetBalance,
   resolveUsdcBalance,
   validateAddressForNetwork,
   type BalanceDeps,
   type PreflightBalanceDeps,
 } from "../src/payment/balance.js";
 import type { WrappedRunResult } from "../src/process/wrapped-client.js";
-import type { LoadedConfig } from "../src/config/index.js";
+import type { LoadedConfig, ResolvedConfig } from "../src/config/index.js";
 import { captureStdout } from "./test-helpers.js";
+import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@faremeter/types/x402v2";
+import type { KnownPaymentAssetDetails } from "../src/payment/requirements.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const solanaConfig = {
+const solanaConfig: ResolvedConfig = {
   version: 1 as const,
   preferences: { format: "table" as const, apiUrl: "https://api.corbits.dev" },
   payment: {
@@ -74,22 +77,43 @@ function makeEvmBalanceDeps(rawAmount: bigint): BalanceDeps {
 
 function makePreflightDeps(
   rawAmount: bigint,
-  accepts: { network: string; amount: string }[],
+  accepts: x402PaymentRequirementsV2[],
+  options?: { receiverAccountExists?: boolean },
 ): PreflightBalanceDeps {
   return {
     ...makeBalanceDeps(rawAmount),
     parseRequirements: async () => ({ accepts }),
+    solanaTokenAccountExists: async () =>
+      options?.receiverAccountExists ?? true,
+  };
+}
+
+function makeRequirement(args: {
+  network: string;
+  amount: string;
+  asset?: string;
+  decimals?: number;
+}): x402PaymentRequirementsV2 {
+  return {
+    scheme: "exact",
+    network: args.network,
+    amount: args.amount,
+    asset: args.asset ?? "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    payTo: "receiver",
+    maxTimeoutSeconds: 60,
+    ...(args.decimals == null ? {} : { extra: { decimals: args.decimals } }),
   };
 }
 
 function makePaymentRequiredResult(args?: {
-  accepts?: { network: string; amount: string }[];
+  accepts?: x402PaymentRequirementsV2[];
 }): Extract<WrappedRunResult, { kind: "payment-required" }> {
   const accepts = args?.accepts ?? [
-    {
+    makeRequirement({
       network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
       amount: "100000",
-    },
+      decimals: 6,
+    }),
   ];
   return {
     kind: "payment-required",
@@ -121,6 +145,81 @@ function makeLoadedConfig(resolved = solanaConfig): LoadedConfig {
   };
 }
 
+const usdcAsset = {
+  asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  symbol: "USDC",
+  decimals: 6,
+} satisfies KnownPaymentAssetDetails;
+
+const usdtAsset = {
+  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  symbol: "USDT",
+  decimals: 6,
+} satisfies KnownPaymentAssetDetails;
+
+const baseUsdcAsset = {
+  asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  symbol: "USDC",
+  decimals: 6,
+} satisfies KnownPaymentAssetDetails;
+
+// ── resolveAssetBalance ───────────────────────────────────────────────────────
+
+await t.test("resolveAssetBalance", async (t) => {
+  await t.test("formats Solana asset balance for a zero balance", async (t) => {
+    const record = await resolveAssetBalance(
+      {
+        network: "devnet",
+        address: "So11111111111111111111111111111111111111112",
+        rpcUrl: "https://api.devnet.solana.com",
+      },
+      usdcAsset,
+      makeBalanceDeps(0n),
+    );
+    t.equal(record.amount, "0.000000");
+    t.equal(record.asset, "USDC");
+    t.equal(record.assetAddress, usdcAsset.asset);
+    t.equal(record.network, "solana-devnet");
+  });
+
+  await t.test(
+    "formats Solana asset balance for a fractional amount",
+    async (t) => {
+      const record = await resolveAssetBalance(
+        {
+          network: "devnet",
+          address: "So11111111111111111111111111111111111111112",
+          rpcUrl: "https://api.devnet.solana.com",
+        },
+        usdtAsset,
+        makeBalanceDeps(500000n),
+      );
+      t.equal(record.amount, "0.500000");
+      t.equal(record.asset, "USDT");
+      t.equal(record.assetAddress, usdtAsset.asset);
+    },
+  );
+
+  await t.test(
+    "formats EVM asset balance using contract-reported decimals",
+    async (t) => {
+      const record = await resolveAssetBalance(
+        {
+          network: "base",
+          address: "0x1234000000000000000000000000000000000000",
+          rpcUrl: "https://mainnet.base.org",
+        },
+        baseUsdcAsset,
+        makeEvmBalanceDeps(1_500_000n),
+      );
+      t.equal(record.amount, "1.500000");
+      t.equal(record.network, "base");
+      t.equal(record.asset, "USDC");
+      t.equal(record.assetAddress, baseUsdcAsset.asset);
+    },
+  );
+});
+
 // ── resolveUsdcBalance ────────────────────────────────────────────────────────
 
 await t.test("resolveUsdcBalance", async (t) => {
@@ -135,6 +234,7 @@ await t.test("resolveUsdcBalance", async (t) => {
     );
     t.equal(record.amount, "0.000000");
     t.equal(record.asset, "USDC");
+    t.equal(record.assetAddress, usdcAsset.asset);
     t.equal(record.network, "solana-devnet");
   });
 
@@ -150,6 +250,7 @@ await t.test("resolveUsdcBalance", async (t) => {
         makeBalanceDeps(500000n),
       );
       t.equal(record.amount, "0.500000");
+      t.equal(record.assetAddress, usdcAsset.asset);
     },
   );
 
@@ -164,6 +265,10 @@ await t.test("resolveUsdcBalance", async (t) => {
     );
     t.equal(record.amount, "10.000000");
     t.equal(record.network, "solana-mainnet-beta");
+    t.equal(
+      record.assetAddress,
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    );
   });
 
   await t.test(
@@ -180,40 +285,7 @@ await t.test("resolveUsdcBalance", async (t) => {
       t.equal(record.amount, "1.500000");
       t.equal(record.network, "base");
       t.equal(record.asset, "USDC");
-    },
-  );
-
-  await t.test(
-    "throws when USDC mint is not found for Solana cluster",
-    async (t) => {
-      const deps = makeBalanceDeps(0n);
-      deps.lookupKnownSPLToken = (() => null) as never;
-      await t.rejects(
-        resolveUsdcBalance(
-          { network: "devnet", address: "addr", rpcUrl: "http://localhost" },
-          deps,
-        ),
-        /No known USDC mint/,
-      );
-    },
-  );
-
-  await t.test(
-    "throws when USDC asset is not found for EVM chain",
-    async (t) => {
-      const deps = makeEvmBalanceDeps(0n);
-      deps.lookupKnownAsset = (() => null) as never;
-      await t.rejects(
-        resolveUsdcBalance(
-          {
-            network: "base",
-            address: "0x1234000000000000000000000000000000000000",
-            rpcUrl: "http://localhost",
-          },
-          deps,
-        ),
-        /No known USDC asset/,
-      );
+      t.equal(record.assetAddress, baseUsdcAsset.asset);
     },
   );
 });
@@ -296,17 +368,19 @@ await t.test("checkPreflightBalance", async (t) => {
         solanaConfig,
         makePaymentRequiredResult({
           accepts: [
-            {
+            makeRequirement({
               network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
               amount: "100000",
-            },
+              decimals: 6,
+            }),
           ],
         }),
         makePreflightDeps(100000n, [
-          {
+          makeRequirement({
             network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
             amount: "100000",
-          },
+            decimals: 6,
+          }),
         ]),
       ),
     );
@@ -318,14 +392,71 @@ await t.test("checkPreflightBalance", async (t) => {
         solanaConfig,
         makePaymentRequiredResult(),
         makePreflightDeps(500000n, [
-          {
+          makeRequirement({
             network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
             amount: "100000",
-          },
+            decimals: 6,
+          }),
         ]),
       ),
     );
   });
+
+  await t.test(
+    "reports when the Solana receiver token account is missing",
+    async (t) => {
+      await t.rejects(
+        checkPreflightBalance(
+          {
+            ...solanaConfig,
+            payment: {
+              ...solanaConfig.payment,
+              asset: "USDT",
+              network: "mainnet-beta",
+              rpcUrl: "https://api.mainnet-beta.solana.com",
+            },
+          },
+          makePaymentRequiredResult({
+            accepts: [
+              {
+                ...makeRequirement({
+                  network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                  amount: "100000",
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                  decimals: 6,
+                }),
+                payTo: "LCQf3TfH7set8drA12p8bHDaBn9yXq7KauP8NFRHubq",
+                extra: {
+                  decimals: 6,
+                  tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                },
+              },
+            ],
+          }),
+          makePreflightDeps(
+            500000n,
+            [
+              {
+                ...makeRequirement({
+                  network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                  amount: "100000",
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                  decimals: 6,
+                }),
+                payTo: "LCQf3TfH7set8drA12p8bHDaBn9yXq7KauP8NFRHubq",
+                extra: {
+                  decimals: 6,
+                  tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                },
+              },
+            ],
+            { receiverAccountExists: false },
+          ),
+        ),
+        /Endpoint advertises USDT on solana-mainnet-beta, but the receiver token account is not initialized yet/,
+      );
+    },
+  );
 
   await t.test(
     "throws with the correct message when balance is insufficient",
@@ -335,10 +466,11 @@ await t.test("checkPreflightBalance", async (t) => {
           solanaConfig,
           makePaymentRequiredResult(),
           makePreflightDeps(50000n, [
-            {
+            makeRequirement({
               network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
               amount: "100000",
-            },
+              decimals: 6,
+            }),
           ]),
         ),
         /Insufficient USDC balance \(have 0\.050000, endpoint costs 0\.100000\)/,
@@ -347,14 +479,22 @@ await t.test("checkPreflightBalance", async (t) => {
   );
 
   await t.test(
-    "skips check when no requirement matches the wallet family",
+    "reports when no accepted asset matches the active payment network",
     async (t) => {
-      await t.resolves(
+      await t.rejects(
         checkPreflightBalance(
           solanaConfig,
           makePaymentRequiredResult(),
-          makePreflightDeps(0n, [{ network: "eip155:8453", amount: "100000" }]),
+          makePreflightDeps(0n, [
+            makeRequirement({
+              network: "eip155:8453",
+              amount: "100000",
+              asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+              decimals: 6,
+            }),
+          ]),
         ),
+        /server only offered EVM x402 payment requirements .* active payment network is devnet/,
       );
     },
   );
@@ -367,14 +507,17 @@ await t.test("checkPreflightBalance", async (t) => {
           solanaConfig,
           makePaymentRequiredResult(),
           makePreflightDeps(50000n, [
-            {
+            makeRequirement({
               network: "solana:mainnet",
               amount: "1000000",
-            },
-            {
+              asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+              decimals: 6,
+            }),
+            makeRequirement({
               network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
               amount: "200000",
-            },
+              decimals: 6,
+            }),
           ]),
         ),
         /have 0\.050000, endpoint costs 0\.200000/,
@@ -391,10 +534,11 @@ await t.test("balance command", async (t) => {
     async (t) => {
       const cmd = createBalanceCommand({
         loadRequiredConfig: async () => makeLoadedConfig(),
-        resolveUsdcBalance: async () => ({
+        resolveAssetBalance: async () => ({
           address: "So11111111111111111111111111111111111111112",
           network: "solana-devnet",
           asset: "USDC",
+          assetAddress: usdcAsset.asset,
           amount: "1.500000",
         }),
         balanceDeps: makeBalanceDeps(1_500_000n),
@@ -404,6 +548,7 @@ await t.test("balance command", async (t) => {
         cmd.handler({
           network: undefined,
           address: undefined,
+          asset: undefined,
           format: undefined,
         }),
       );
@@ -411,6 +556,7 @@ await t.test("balance command", async (t) => {
       t.match(stdout, /So111111/);
       t.match(stdout, /solana-devnet/);
       t.match(stdout, /USDC/);
+      t.match(stdout, new RegExp(usdcAsset.asset));
       t.match(stdout, /1\.500000/);
     },
   );
@@ -418,43 +564,54 @@ await t.test("balance command", async (t) => {
   await t.test("outputs JSON when format is json", async (t) => {
     const cmd = createBalanceCommand({
       loadRequiredConfig: async () => makeLoadedConfig(),
-      resolveUsdcBalance: async () => ({
+      resolveAssetBalance: async () => ({
         address: "So11111111111111111111111111111111111111112",
         network: "solana-devnet",
         asset: "USDC",
+        assetAddress: usdcAsset.asset,
         amount: "0.500000",
       }),
       balanceDeps: makeBalanceDeps(500000n),
     });
 
     const stdout = await captureStdout(() =>
-      cmd.handler({ network: undefined, address: undefined, format: "json" }),
+      cmd.handler({
+        network: undefined,
+        address: undefined,
+        asset: undefined,
+        format: "json",
+      }),
     );
 
     const parsed = JSON.parse(stdout) as {
       address: string;
       network: string;
       asset: string;
+      assetAddress: string;
       amount: string;
     };
     t.equal(parsed.amount, "0.500000");
     t.equal(parsed.asset, "USDC");
+    t.equal(parsed.assetAddress, usdcAsset.asset);
   });
 
   await t.test(
     "uses --network and --address overrides without config",
     async (t) => {
       let capturedTarget: unknown;
+      let capturedAsset: KnownPaymentAssetDetails | undefined;
       const cmd = createBalanceCommand({
         loadRequiredConfig: async () => {
           throw new Error("config should not be loaded for full override");
         },
-        resolveUsdcBalance: async (target) => {
+        resolveAssetBalance: async (target, asset) => {
           capturedTarget = target;
+          capturedAsset = asset;
           return {
             address: target.address,
             network: "solana-devnet",
             asset: "USDC",
+            assetAddress: usdcAsset.asset,
             amount: "2.000000",
           };
         },
@@ -464,6 +621,7 @@ await t.test("balance command", async (t) => {
       await cmd.handler({
         network: "devnet",
         address: "So11111111111111111111111111111111111111112",
+        asset: undefined,
         format: undefined,
       });
 
@@ -472,13 +630,153 @@ await t.test("balance command", async (t) => {
         (capturedTarget as { address: string }).address,
         "So11111111111111111111111111111111111111112",
       );
+      t.same(capturedAsset, usdcAsset);
+    },
+  );
+
+  await t.test(
+    "uses the selected symbol override on the configured network",
+    async (t) => {
+      let capturedAsset: KnownPaymentAssetDetails | undefined;
+      const cmd = createBalanceCommand({
+        loadRequiredConfig: async () =>
+          makeLoadedConfig({
+            ...solanaConfig,
+            payment: {
+              ...solanaConfig.payment,
+              network: "mainnet-beta",
+              rpcUrl: "https://api.mainnet-beta.solana.com",
+            },
+          }),
+        resolveAssetBalance: async (_target, asset) => {
+          capturedAsset = asset;
+          return {
+            address: "So11111111111111111111111111111111111111112",
+            network: "solana-mainnet-beta",
+            asset: asset.symbol,
+            assetAddress: asset.asset,
+            amount: "4.000000",
+          };
+        },
+        balanceDeps: makeBalanceDeps(4_000_000n),
+      });
+
+      await cmd.handler({
+        network: undefined,
+        address: undefined,
+        asset: "usdt",
+        format: undefined,
+      });
+
+      t.same(capturedAsset, {
+        asset: usdtAsset.asset,
+        symbol: "USDT",
+        decimals: 6,
+      });
+    },
+  );
+
+  await t.test(
+    "normalizes EVM asset address overrides to the registry address",
+    async (t) => {
+      let capturedAsset: KnownPaymentAssetDetails | undefined;
+      const cmd = createBalanceCommand({
+        loadRequiredConfig: async () =>
+          makeLoadedConfig({
+            ...solanaConfig,
+            payment: {
+              ...solanaConfig.payment,
+              network: "base",
+              family: "evm",
+              address: "0x1234000000000000000000000000000000000000",
+              rpcUrl: "https://mainnet.base.org",
+            },
+            activeWallet: {
+              kind: "ows",
+              family: "evm",
+              address: "0x1234000000000000000000000000000000000000",
+              walletId: "primary-evm",
+            },
+          }),
+        resolveAssetBalance: async (_target, asset) => {
+          capturedAsset = asset;
+          return {
+            address: "0x1234000000000000000000000000000000000000",
+            network: "base",
+            asset: asset.symbol,
+            assetAddress: asset.asset,
+            amount: "5.000000",
+          };
+        },
+        balanceDeps: makeEvmBalanceDeps(5_000_000n),
+      });
+
+      await cmd.handler({
+        network: undefined,
+        address: undefined,
+        asset: "0x833589fcD6EDB6E08F4c7c32d4f71B54bDA02913",
+        format: undefined,
+      });
+
+      t.same(capturedAsset, baseUsdcAsset);
+    },
+  );
+
+  await t.test("rejects unknown symbols before balance lookup", async (t) => {
+    const cmd = createBalanceCommand({
+      loadRequiredConfig: async () => makeLoadedConfig(),
+      resolveAssetBalance: async () => {
+        throw new Error("should not reach balance lookup");
+      },
+      balanceDeps: makeBalanceDeps(0n),
+    });
+
+    await t.rejects(
+      cmd.handler({
+        network: undefined,
+        address: undefined,
+        asset: "notreal",
+        format: undefined,
+      }),
+      /Unknown asset symbol notreal for solana-devnet/,
+    );
+  });
+
+  await t.test(
+    "rejects unregistered addresses before balance lookup",
+    async (t) => {
+      const cmd = createBalanceCommand({
+        loadRequiredConfig: async () =>
+          makeLoadedConfig({
+            ...solanaConfig,
+            payment: {
+              ...solanaConfig.payment,
+              network: "mainnet-beta",
+              rpcUrl: "https://api.mainnet-beta.solana.com",
+            },
+          }),
+        resolveAssetBalance: async () => {
+          throw new Error("should not reach balance lookup");
+        },
+        balanceDeps: makeBalanceDeps(0n),
+      });
+
+      await t.rejects(
+        cmd.handler({
+          network: undefined,
+          address: undefined,
+          asset: "So11111111111111111111111111111111111111112",
+          format: undefined,
+        }),
+        /Asset address So11111111111111111111111111111111111111112 is not registered on solana-mainnet-beta/,
+      );
     },
   );
 
   await t.test("fails when --address is given without --network", async (t) => {
     const cmd = createBalanceCommand({
       loadRequiredConfig: async () => makeLoadedConfig(),
-      resolveUsdcBalance: async () => {
+      resolveAssetBalance: async () => {
         throw new Error("should not reach balance lookup");
       },
       balanceDeps: makeBalanceDeps(0n),
@@ -488,6 +786,7 @@ await t.test("balance command", async (t) => {
       cmd.handler({
         network: undefined,
         address: "So11111111111111111111111111111111111111112",
+        asset: undefined,
         format: undefined,
       }),
       /--address requires --network/,
@@ -499,7 +798,7 @@ await t.test("balance command", async (t) => {
     async (t) => {
       const cmd = createBalanceCommand({
         loadRequiredConfig: async () => makeLoadedConfig(),
-        resolveUsdcBalance: async () => {
+        resolveAssetBalance: async () => {
           throw new Error("should not reach balance lookup");
         },
         balanceDeps: makeBalanceDeps(0n),
@@ -509,6 +808,7 @@ await t.test("balance command", async (t) => {
         cmd.handler({
           network: "base",
           address: undefined,
+          asset: undefined,
           format: undefined,
         }),
         /requires a evm wallet address/,
@@ -522,12 +822,13 @@ await t.test("balance command", async (t) => {
       let capturedTarget: unknown;
       const cmd = createBalanceCommand({
         loadRequiredConfig: async () => makeLoadedConfig(),
-        resolveUsdcBalance: async (target) => {
+        resolveAssetBalance: async (target) => {
           capturedTarget = target;
           return {
             address: target.address,
             network: "solana-mainnet-beta",
             asset: "USDC",
+            assetAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
             amount: "3.000000",
           };
         },
@@ -537,6 +838,7 @@ await t.test("balance command", async (t) => {
       await cmd.handler({
         network: "mainnet-beta",
         address: undefined,
+        asset: undefined,
         format: undefined,
       });
 
@@ -551,7 +853,7 @@ await t.test("balance command", async (t) => {
   await t.test("outputs stderr for balance errors", async (t) => {
     const cmd = createBalanceCommand({
       loadRequiredConfig: async () => makeLoadedConfig(),
-      resolveUsdcBalance: async () => {
+      resolveAssetBalance: async () => {
         throw new Error("RPC connection failed");
       },
       balanceDeps: makeBalanceDeps(0n),
@@ -561,6 +863,7 @@ await t.test("balance command", async (t) => {
       cmd.handler({
         network: undefined,
         address: undefined,
+        asset: undefined,
         format: undefined,
       }),
       /RPC connection failed/,

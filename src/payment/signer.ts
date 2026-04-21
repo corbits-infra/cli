@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import { normalizeNetworkId, translateNetworkToLegacy } from "@faremeter/info";
-import { lookupKnownAsset, lookupX402Network } from "@faremeter/info/evm";
+import {
+  lookupKnownAsset,
+  lookupX402Network,
+  type KnownAsset,
+} from "@faremeter/info/evm";
 import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
 import { exact as evmExact } from "@faremeter/payment-evm";
 import { exact as solanaExact } from "@faremeter/payment-solana";
@@ -31,6 +35,10 @@ import { ConfigError } from "../config/index.js";
 import type { ResolvedConfig } from "../config/index.js";
 import { buildOwsPaymentHandler } from "./ows.js";
 import { getEvmChainInfo, getSolanaCluster } from "./networks.js";
+import {
+  getPaymentRequirementDetails,
+  type PaymentRequirementDetails,
+} from "./requirements.js";
 
 import type { RetryHeader } from "../process/wrapped-client.js";
 export type { RetryHeader } from "../process/wrapped-client.js";
@@ -102,10 +110,37 @@ export type ParsedPaymentRequiredResponse = {
   resource?: x402ResourceInfo;
 };
 
+export type PaymentRequirementSelection =
+  | {
+      kind: "selected";
+      activeNetwork: string;
+      requestedAsset: string;
+      selected: PaymentRequirementDetails;
+    }
+  | {
+      kind: "network-mismatch";
+      activeNetwork: string;
+      requestedAsset: string;
+      options: PaymentRequirementDetails[];
+    }
+  | {
+      kind: "asset-mismatch";
+      activeNetwork: string;
+      requestedAsset: string;
+      options: PaymentRequirementDetails[];
+    }
+  | {
+      kind: "asset-ambiguous";
+      activeNetwork: string;
+      requestedAsset: string;
+      matches: PaymentRequirementDetails[];
+    };
+
 type PaymentHandlerStrategy = {
   matches: (config: ResolvedConfig) => boolean;
   build: (
     config: ResolvedConfig,
+    requirement: PaymentRequirementDetails | undefined,
     deps: BuildPaymentHandlerDeps,
   ) => Promise<PaymentHandlerInfo>;
 };
@@ -120,38 +155,48 @@ const SOLANA_PAYMENT_HANDLER_OPTIONS = {
 
 function resolveSolanaPaymentInfo(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   deps: Pick<BuildPaymentHandlerDeps, "lookupKnownSPLToken" | "clusterToCAIP2">,
 ): SolanaPaymentInfo {
   const cluster = getSolanaCluster(config);
   const tokenInfo = deps.lookupKnownSPLToken(cluster, "USDC");
-  if (tokenInfo == null) {
+  const asset = requirement?.asset ?? tokenInfo?.address;
+  if (asset == null) {
     throw new ConfigError(`No known USDC mint for Solana cluster ${cluster}`);
   }
 
   return {
     cluster,
-    mint: new PublicKey(tokenInfo.address),
-    network: deps.clusterToCAIP2(cluster).caip2,
-    asset: tokenInfo.address,
+    mint: new PublicKey(asset),
+    network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
+    asset,
   };
 }
 
 function resolveEvmPaymentInfo(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   deps: Pick<BuildPaymentHandlerDeps, "lookupKnownAsset" | "lookupX402Network">,
 ): EvmPaymentInfo {
   const chainInfo = getEvmChainInfo(config);
-  const assetInfo = deps.lookupKnownAsset(chainInfo.id, "USDC");
+  if (requirement != null && requirement.symbol == null) {
+    throw new ConfigError(
+      `No known asset metadata for ${requirement.asset} on EVM network ${config.payment.network}`,
+    );
+  }
+
+  const assetSymbol = (requirement?.symbol ?? "USDC") as KnownAsset;
+  const assetInfo = deps.lookupKnownAsset(chainInfo.id, assetSymbol);
   if (assetInfo == null) {
     throw new ConfigError(
-      `No known USDC asset for EVM network ${config.payment.network}`,
+      `No known ${assetSymbol} asset for EVM network ${config.payment.network}`,
     );
   }
 
   return {
     chainInfo: { id: chainInfo.id, name: chainInfo.name },
-    network: deps.lookupX402Network(chainInfo.id),
-    asset: assetInfo.address,
+    network: requirement?.network ?? deps.lookupX402Network(chainInfo.id),
+    asset: requirement?.asset ?? assetInfo.address,
     assetInfo,
   };
 }
@@ -201,13 +246,14 @@ async function readActiveWalletSecret(
 
 async function buildSolanaKeypairHandler(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   deps: BuildPaymentHandlerDeps,
 ): Promise<PaymentHandlerInfo> {
   if (config.activeWallet.kind !== "keypair") {
     throw new ConfigError("Solana keypair handler requires a keypair wallet");
   }
 
-  const paymentInfo = resolveSolanaPaymentInfo(config, deps);
+  const paymentInfo = resolveSolanaPaymentInfo(config, requirement, deps);
   const secretKeyText = await readActiveWalletSecret(config, deps);
   const keypair = Keypair.fromSecretKey(parseSolanaSecretKey(secretKeyText));
   const wallet = await deps.createSolanaLocalWallet(
@@ -229,13 +275,14 @@ async function buildSolanaKeypairHandler(
 
 async function buildEvmKeypairHandler(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   deps: BuildPaymentHandlerDeps,
 ): Promise<PaymentHandlerInfo> {
   if (config.activeWallet.kind !== "keypair") {
     throw new ConfigError("EVM keypair handler requires a keypair wallet");
   }
 
-  const paymentInfo = resolveEvmPaymentInfo(config, deps);
+  const paymentInfo = resolveEvmPaymentInfo(config, requirement, deps);
   const privateKeyText = await readActiveWalletSecret(config, deps);
   const wallet = await deps.createEvmLocalWallet(
     paymentInfo.chainInfo,
@@ -270,23 +317,59 @@ function decodePaymentRequiredHeaderValue(value: string): string {
   return Buffer.from(value, "base64").toString("utf8");
 }
 
-function parsePaymentRequiredHeaderValue(
-  value: string,
+function parseDecodedPaymentRequiredValue(
+  decoded: string,
+  url: string,
 ): ParsedPaymentRequiredResponse {
+  let parsedJson: unknown;
   try {
-    const parsed = x402PaymentRequiredResponseV2.assert(
-      JSON.parse(decodePaymentRequiredHeaderValue(value)) as unknown,
-    );
+    parsedJson = JSON.parse(decoded);
+  } catch (cause) {
+    throw new Error("failed to parse x402 payment challenge header as JSON", {
+      cause,
+    });
+  }
+
+  try {
+    const parsed = x402PaymentRequiredResponseV2.assert(parsedJson);
     return {
       detectedVersion: 2,
       accepts: parsed.accepts,
       resource: parsed.resource,
+    };
+  } catch {
+    // Fall through and try the legacy v1 challenge shape.
+  }
+
+  try {
+    const normalized = normalizePaymentRequiredResponse(
+      x402PaymentRequiredResponseLenient.assert(parsedJson),
+    );
+    const adapted = adaptPaymentRequiredResponseV1ToV2(
+      normalized,
+      url,
+      normalizeNetworkId,
+    );
+    return {
+      detectedVersion: 1,
+      accepts: adapted.accepts,
+      resource: adapted.resource,
     };
   } catch (cause) {
     throw new Error("failed to parse x402 payment challenge header", {
       cause,
     });
   }
+}
+
+function parsePaymentRequiredHeaderValue(
+  value: string,
+  url: string,
+): ParsedPaymentRequiredResponse {
+  return parseDecodedPaymentRequiredValue(
+    decodePaymentRequiredHeaderValue(value),
+    url,
+  );
 }
 
 export async function extractPaymentRequiredResponse(
@@ -298,7 +381,7 @@ export async function extractPaymentRequiredResponse(
     response.headers.get("X-PAYMENT-REQUIRED");
 
   if (paymentRequiredHeader != null && paymentRequiredHeader.length > 0) {
-    return parsePaymentRequiredHeaderValue(paymentRequiredHeader);
+    return parsePaymentRequiredHeaderValue(paymentRequiredHeader, url);
   }
 
   try {
@@ -340,13 +423,188 @@ function getRequirementNetworkFamily(network: string): "solana" | "evm" | null {
   return null;
 }
 
-function formatPaymentRequirementMismatch(
-  config: ResolvedConfig,
-  accepts: x402PaymentRequirementsV2[],
+function getConfiguredPaymentNetwork(config: ResolvedConfig): string {
+  if (config.payment.family === "solana") {
+    return clusterToCAIP2(getSolanaCluster(config)).caip2;
+  }
+
+  return lookupX402Network(getEvmChainInfo(config).id);
+}
+
+function dedupePaymentOptions(
+  options: PaymentRequirementDetails[],
+): PaymentRequirementDetails[] {
+  const seen = new Set<string>();
+  const deduped: PaymentRequirementDetails[] = [];
+
+  for (const option of options) {
+    const key = `${option.network}:${option.asset.toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(option);
+  }
+
+  return deduped;
+}
+
+function dedupeExactPaymentRequirements(
+  options: PaymentRequirementDetails[],
+): PaymentRequirementDetails[] {
+  const seen = new Set<string>();
+  const deduped: PaymentRequirementDetails[] = [];
+
+  for (const option of options) {
+    const key = stableStringify(option.requirement);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(option);
+  }
+
+  return deduped;
+}
+
+function formatAcceptedAssetOptions(
+  options: PaymentRequirementDetails[],
 ): string {
-  const acceptedNetworks = accepts.map((requirement) =>
-    normalizeNetworkId(requirement.network),
+  return dedupePaymentOptions(options)
+    .map((option) =>
+      option.symbol == null
+        ? option.asset
+        : `${option.symbol} (${option.asset})`,
+    )
+    .join(", ");
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (value != null && typeof value === "object") {
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    return `{${entries
+      .map(
+        ([key, entryValue]) =>
+          `${JSON.stringify(key)}:${stableStringify(entryValue)}`,
+      )
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function formatAmbiguousAssetOptions(
+  matches: PaymentRequirementDetails[],
+): string {
+  const payTos = new Set(matches.map((match) => match.requirement.payTo));
+  const timeouts = new Set(
+    matches.map((match) => String(match.requirement.maxTimeoutSeconds)),
   );
+  const extras = new Set(
+    matches.map((match) => stableStringify(match.requirement.extra ?? null)),
+  );
+
+  return matches
+    .map((match, index) => {
+      const base =
+        match.symbol == null ? match.asset : `${match.symbol} (${match.asset})`;
+      const details: string[] = [];
+
+      if (payTos.size > 1) {
+        details.push(`payTo=${match.requirement.payTo}`);
+      }
+      if (timeouts.size > 1) {
+        details.push(
+          `maxTimeoutSeconds=${match.requirement.maxTimeoutSeconds}`,
+        );
+      }
+      if (extras.size > 1) {
+        details.push(
+          `extra=${stableStringify(match.requirement.extra ?? null)}`,
+        );
+      }
+      if (details.length === 0) {
+        details.push(`requirement=${index + 1}`);
+      }
+
+      return `${base} [${details.join(", ")}]`;
+    })
+    .join(", ");
+}
+
+export function selectPaymentRequirement(args: {
+  accepts: x402PaymentRequirementsV2[];
+  config: ResolvedConfig;
+}): PaymentRequirementSelection {
+  const requestedAsset = args.config.payment.asset;
+  const activeNetwork = getConfiguredPaymentNetwork(args.config);
+  const options = getPaymentRequirementDetails(args.accepts);
+  const activeNetworkOptions = dedupeExactPaymentRequirements(
+    options.filter((option) => option.network === activeNetwork),
+  );
+
+  if (activeNetworkOptions.length === 0) {
+    return {
+      kind: "network-mismatch",
+      activeNetwork,
+      requestedAsset,
+      options,
+    };
+  }
+
+  const symbolMatches = activeNetworkOptions.filter(
+    (option) => option.symbol?.toLowerCase() === requestedAsset.toLowerCase(),
+  );
+
+  if (symbolMatches.length === 1) {
+    const selected = symbolMatches[0];
+    if (selected == null) {
+      throw new Error("expected exactly one selected payment requirement");
+    }
+    return {
+      kind: "selected",
+      activeNetwork,
+      requestedAsset,
+      selected,
+    };
+  }
+
+  if (symbolMatches.length > 1) {
+    return {
+      kind: "asset-ambiguous",
+      activeNetwork,
+      requestedAsset,
+      matches: symbolMatches,
+    };
+  }
+
+  return {
+    kind: "asset-mismatch",
+    activeNetwork,
+    requestedAsset,
+    options: dedupePaymentOptions(activeNetworkOptions),
+  };
+}
+
+export function formatPaymentRequirementMismatch(
+  config: ResolvedConfig,
+  selection: Exclude<PaymentRequirementSelection, { kind: "selected" }>,
+): string {
+  if (selection.kind === "asset-mismatch") {
+    return `active payment network ${config.payment.network} does not offer asset ${selection.requestedAsset}; accepted assets: ${formatAcceptedAssetOptions(selection.options)}`;
+  }
+
+  if (selection.kind === "asset-ambiguous") {
+    return `asset ${selection.requestedAsset} is ambiguous on active payment network ${config.payment.network}; matching requirements: ${formatAmbiguousAssetOptions(selection.matches)}`;
+  }
+
+  const acceptedNetworks = selection.options.map((option) => option.network);
   const acceptedFamilies = new Set(
     acceptedNetworks
       .map((network) => getRequirementNetworkFamily(network))
@@ -417,7 +675,8 @@ export function extractPaymentResponseTransaction(
 function createOwsPaymentHandlerStrategy(): PaymentHandlerStrategy {
   return {
     matches: (config) => config.activeWallet.kind === "ows",
-    build: async (config, deps) => deps.buildOwsPaymentHandler(config),
+    build: async (config, requirement, deps) =>
+      deps.buildOwsPaymentHandler(config, requirement),
   };
 }
 
@@ -449,11 +708,12 @@ function getPaymentHandlerStrategies(): PaymentHandlerStrategy[] {
 
 async function resolvePaymentHandler(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   deps: BuildPaymentHandlerDeps,
 ): Promise<PaymentHandlerInfo> {
   for (const strategy of getPaymentHandlerStrategies()) {
     if (strategy.matches(config)) {
-      return strategy.build(config, deps);
+      return strategy.build(config, requirement, deps);
     }
   }
 
@@ -465,8 +725,9 @@ async function resolvePaymentHandler(
 export function createBuildPaymentHandler(deps: BuildPaymentHandlerDeps) {
   return async function buildPaymentHandler(
     config: ResolvedConfig,
+    requirement?: PaymentRequirementDetails,
   ): Promise<PaymentHandlerInfo> {
-    return resolvePaymentHandler(config, deps);
+    return resolvePaymentHandler(config, requirement, deps);
   };
 }
 
@@ -480,15 +741,26 @@ export function createBuildPaymentRetryHeader(
       args.response,
       args.url,
     );
-    const { handler } = await deps.buildPaymentHandler(args.config);
+    const selection = selectPaymentRequirement({
+      accepts: paymentRequired.accepts,
+      config: args.config,
+    });
+    if (selection.kind !== "selected") {
+      throw new Error(formatPaymentRequirementMismatch(args.config, selection));
+    }
+
+    const { handler } = await deps.buildPaymentHandler(
+      args.config,
+      selection.selected,
+    );
     const execers = await handler(
       { request: new Request(args.url, args.requestInit) },
-      paymentRequired.accepts,
+      [selection.selected.requirement],
     );
     const execer = execers[0];
     if (execer == null) {
       throw new Error(
-        formatPaymentRequirementMismatch(args.config, paymentRequired.accepts),
+        `failed to build a payment retry for selected asset ${selection.requestedAsset} on ${args.config.payment.network}`,
       );
     }
 

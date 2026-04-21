@@ -5,7 +5,11 @@ import {
   type AccountInfo,
   type WalletInfo,
 } from "@open-wallet-standard/core";
-import { lookupKnownAsset, lookupX402Network } from "@faremeter/info/evm";
+import {
+  lookupKnownAsset,
+  lookupX402Network,
+  type KnownAsset,
+} from "@faremeter/info/evm";
 import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
 import { exact as evmExact } from "@faremeter/payment-evm";
 import { exact as solanaExact } from "@faremeter/payment-solana";
@@ -22,6 +26,7 @@ import type {
   ResolvedWallet,
   WalletFamily,
 } from "../config/index.js";
+import type { PaymentRequirementDetails } from "./requirements.js";
 import {
   type EvmChainInfo,
   getEvmChainInfo,
@@ -233,18 +238,20 @@ function buildSolanaOwsWallet(
 
 function buildSolanaOwsPaymentHandler(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   walletAccount: OwsWalletAccount,
   deps: OwsDeps,
 ): OwsPaymentHandler {
   const cluster = getSolanaCluster(config);
   const tokenInfo = deps.lookupKnownSPLToken(cluster, "USDC");
-  if (tokenInfo == null) {
+  const asset = requirement?.asset ?? tokenInfo?.address;
+  if (asset == null) {
     throw new ConfigError(`No known USDC mint for Solana cluster ${cluster}`);
   }
 
   const publicKey = new PublicKey(walletAccount.account.address);
   const connection = deps.createConnection(config.payment.rpcUrl);
-  const mint = new PublicKey(tokenInfo.address);
+  const mint = new PublicKey(asset);
   const wallet = buildSolanaOwsWallet(
     cluster,
     walletAccount.walletId,
@@ -259,7 +266,7 @@ function buildSolanaOwsPaymentHandler(
       connection,
       SOLANA_PAYMENT_HANDLER_OPTIONS,
     ),
-    network: deps.clusterToCAIP2(cluster).caip2,
+    network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
   };
 }
 
@@ -288,14 +295,22 @@ function buildEvmOwsWallet(
 
 function buildEvmOwsPaymentHandler(
   config: ResolvedConfig,
+  requirement: PaymentRequirementDetails | undefined,
   walletAccount: OwsWalletAccount,
   deps: OwsDeps,
 ): OwsPaymentHandler {
   const chainInfo = getEvmChainInfo(config);
-  const assetInfo = deps.lookupKnownAsset(chainInfo.id, "USDC");
+  if (requirement != null && requirement.symbol == null) {
+    throw new ConfigError(
+      `No known asset metadata for ${requirement.asset} on EVM network ${config.payment.network}`,
+    );
+  }
+
+  const assetSymbol = (requirement?.symbol ?? "USDC") as KnownAsset;
+  const assetInfo = deps.lookupKnownAsset(chainInfo.id, assetSymbol);
   if (assetInfo == null) {
     throw new ConfigError(
-      `No known USDC asset for EVM network ${config.payment.network}`,
+      `No known ${assetSymbol} asset for EVM network ${config.payment.network}`,
     );
   }
 
@@ -312,21 +327,27 @@ function buildEvmOwsPaymentHandler(
 
   return {
     handler: deps.createEvmPaymentHandler(wallet, { asset: assetInfo }),
-    network: deps.lookupX402Network(chainInfo.id),
+    network: requirement?.network ?? deps.lookupX402Network(chainInfo.id),
   };
 }
 
 export function createBuildOwsPaymentHandler(deps: OwsDeps) {
   return async function buildOwsPaymentHandler(
     config: ResolvedConfig,
+    requirement?: PaymentRequirementDetails,
   ): Promise<OwsPaymentHandler> {
     const walletAccount = getOwsWalletAccount(config, deps);
 
     if (config.activeWallet.family === "solana") {
-      return buildSolanaOwsPaymentHandler(config, walletAccount, deps);
+      return buildSolanaOwsPaymentHandler(
+        config,
+        requirement,
+        walletAccount,
+        deps,
+      );
     }
 
-    return buildEvmOwsPaymentHandler(config, walletAccount, deps);
+    return buildEvmOwsPaymentHandler(config, requirement, walletAccount, deps);
   };
 }
 

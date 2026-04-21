@@ -423,14 +423,6 @@ await t.test("payment signer", async (t) => {
       t.same(seenAccepts, [
         {
           scheme: "exact",
-          network: "eip155:8453",
-          amount: "1000",
-          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-          payTo: "receiver",
-          maxTimeoutSeconds: 60,
-        },
-        {
-          scheme: "exact",
           network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
           amount: "1000",
           asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
@@ -546,6 +538,308 @@ await t.test("payment signer", async (t) => {
           decimals: 6,
         },
       });
+    },
+  );
+
+  await t.test(
+    "selects the requested asset on the active payment network",
+    async (t) => {
+      let seenRequirementSymbol: string | null | undefined;
+      let seenAccepts: unknown[] | undefined;
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async (_config, requirement) => {
+          seenRequirementSymbol = requirement?.symbol;
+          return {
+            network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+            handler: async (_context, accepts) => {
+              seenAccepts = accepts;
+              const firstAccept = accepts[0];
+              if (firstAccept == null) {
+                throw new Error("expected a supported payment requirement");
+              }
+
+              return [
+                {
+                  requirements: firstAccept,
+                  exec: async () => ({
+                    payload: {
+                      signature: "0xpaid-usdt",
+                    },
+                  }),
+                },
+              ];
+            },
+          };
+        },
+      });
+
+      const header = await buildPaymentRetryHeader({
+        config: {
+          ...createSolanaKeypairConfig(),
+          payment: {
+            ...createSolanaKeypairConfig().payment,
+            asset: "USDT",
+            network: "mainnet-beta",
+            rpcUrl: "https://api.mainnet-beta.solana.com",
+          },
+        },
+        response: new Response(
+          JSON.stringify({
+            x402Version: 1,
+            accepts: [
+              {
+                scheme: "exact",
+                network: "solana-mainnet-beta",
+                maxAmountRequired: "10000",
+                resource: "https://example.com",
+                description: "pay",
+                payTo: "receiver",
+                maxTimeoutSeconds: 60,
+                asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                extra: { decimals: 6 },
+              },
+              {
+                scheme: "exact",
+                network: "solana-mainnet-beta",
+                maxAmountRequired: "10000",
+                resource: "https://example.com",
+                description: "pay",
+                payTo: "receiver",
+                maxTimeoutSeconds: 60,
+                asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                extra: { decimals: 6 },
+              },
+            ],
+          }),
+          { status: 402, statusText: "Payment Required" },
+        ),
+        url: "https://example.com",
+        requestInit: { method: "GET" },
+      });
+
+      t.equal(seenRequirementSymbol, "USDT");
+      t.same(seenAccepts, [
+        {
+          scheme: "exact",
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          amount: "10000",
+          asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+          extra: { decimals: 6 },
+        },
+      ]);
+      t.equal(
+        header.paymentInfo.asset,
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      );
+    },
+  );
+
+  await t.test(
+    "reports duplicate requirements for the same asset as ambiguous",
+    async (t) => {
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          handler: async () => [],
+        }),
+      });
+
+      await t.rejects(
+        buildPaymentRetryHeader({
+          config: {
+            ...createSolanaKeypairConfig(),
+            payment: {
+              ...createSolanaKeypairConfig().payment,
+              asset: "USDT",
+              network: "mainnet-beta",
+              rpcUrl: "https://api.mainnet-beta.solana.com",
+            },
+          },
+          response: new Response(
+            JSON.stringify({
+              x402Version: 1,
+              accepts: [
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "10000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver-a",
+                  maxTimeoutSeconds: 60,
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                  extra: { decimals: 6 },
+                },
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "10000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver-b",
+                  maxTimeoutSeconds: 60,
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                  extra: { decimals: 6 },
+                },
+              ],
+            }),
+            { status: 402, statusText: "Payment Required" },
+          ),
+          url: "https://example.com",
+          requestInit: { method: "GET" },
+        }),
+        /asset USDT is ambiguous on active payment network mainnet-beta; matching requirements: .*payTo=receiver-a.*payTo=receiver-b/s,
+      );
+    },
+  );
+
+  await t.test(
+    "ignores exact duplicate requirements for the same asset",
+    async (t) => {
+      let seenAccepts: unknown[] | undefined;
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          handler: async (_context, accepts) => {
+            seenAccepts = accepts;
+            const firstAccept = accepts[0];
+            if (firstAccept == null) {
+              throw new Error("expected a supported payment requirement");
+            }
+
+            return [
+              {
+                requirements: firstAccept,
+                exec: async () => ({
+                  payload: {
+                    signature: "0xpaid-usdt",
+                  },
+                }),
+              },
+            ];
+          },
+        }),
+      });
+
+      const header = await buildPaymentRetryHeader({
+        config: {
+          ...createSolanaKeypairConfig(),
+          payment: {
+            ...createSolanaKeypairConfig().payment,
+            asset: "USDT",
+            network: "mainnet-beta",
+            rpcUrl: "https://api.mainnet-beta.solana.com",
+          },
+        },
+        response: new Response(
+          JSON.stringify({
+            x402Version: 1,
+            accepts: [
+              {
+                scheme: "exact",
+                network: "solana-mainnet-beta",
+                maxAmountRequired: "10000",
+                resource: "https://example.com",
+                description: "pay",
+                payTo: "receiver",
+                maxTimeoutSeconds: 60,
+                asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                extra: { decimals: 6 },
+              },
+              {
+                scheme: "exact",
+                network: "solana-mainnet-beta",
+                maxAmountRequired: "10000",
+                resource: "https://example.com",
+                description: "pay",
+                payTo: "receiver",
+                maxTimeoutSeconds: 60,
+                asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                extra: { decimals: 6 },
+              },
+            ],
+          }),
+          { status: 402, statusText: "Payment Required" },
+        ),
+        url: "https://example.com",
+        requestInit: { method: "GET" },
+      });
+
+      t.same(seenAccepts, [
+        {
+          scheme: "exact",
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          amount: "10000",
+          asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+          payTo: "receiver",
+          maxTimeoutSeconds: 60,
+          extra: { decimals: 6 },
+        },
+      ]);
+      t.equal(
+        header.paymentInfo.asset,
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      );
+    },
+  );
+
+  await t.test(
+    "reports accepted assets when the default asset is not offered",
+    async (t) => {
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          handler: async () => [],
+        }),
+      });
+
+      await t.rejects(
+        buildPaymentRetryHeader({
+          config: {
+            ...createSolanaKeypairConfig(),
+            payment: {
+              ...createSolanaKeypairConfig().payment,
+              network: "mainnet-beta",
+              rpcUrl: "https://api.mainnet-beta.solana.com",
+            },
+          },
+          response: new Response(
+            JSON.stringify({
+              x402Version: 1,
+              accepts: [
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "10000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                  extra: { decimals: 6 },
+                },
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "10000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+                  extra: { decimals: 6 },
+                },
+              ],
+            }),
+            { status: 402, statusText: "Payment Required" },
+          ),
+          url: "https://example.com",
+          requestInit: { method: "GET" },
+        }),
+        /active payment network mainnet-beta does not offer asset USDC; accepted assets: USDT .* PYUSD/s,
+      );
     },
   );
 

@@ -1,4 +1,12 @@
-import { command, flag, positional, rest, string } from "cmd-ts";
+import {
+  command,
+  flag,
+  option,
+  optional,
+  positional,
+  rest,
+  string,
+} from "cmd-ts";
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
@@ -11,7 +19,10 @@ import {
   extractPaymentResponseTransaction,
   type PaymentMetadata,
 } from "../payment/signer.js";
-import { getPaymentOptions, printPaymentOptions } from "../payment/options.js";
+import {
+  getPaymentRequirementInspection,
+  printPaymentRequirementInspection,
+} from "../payment/options.js";
 import {
   checkPreflightBalance,
   defaultPreflightBalanceDeps,
@@ -230,28 +241,40 @@ export function createCallCommand(deps: CallDeps) {
     name: "call",
     description: "Run curl or wget against an x402-gated endpoint",
     args: {
-      listPaymentOptions: flag({
-        long: "list-payment-options",
+      inspect: flag({
+        long: "inspect",
         description:
-          "Probe the endpoint, print accepted x402 payment options, and exit without paying",
+          "Probe the endpoint, print parsed x402 requirements, and exit without paying",
       }),
       paymentInfo: flag({
         long: "payment-info",
         description:
           "Print paid-call metadata and response status to stderr after a paid retry",
       }),
+      asset: option({
+        type: optional(string),
+        long: "asset",
+        description:
+          "Preferred payment asset symbol for paid retries on the active payment network",
+      }),
       format: formatFlag,
       tool: positional({ type: string, displayName: "curl|wget" }),
       args: rest({ displayName: "args" }),
     },
     handler: async ({
-      listPaymentOptions,
+      inspect,
       paymentInfo,
+      asset,
       format: formatArg,
       tool,
       args: clientArgs,
     }) => {
-      const inlineFormat = listPaymentOptions
+      if (inspect && asset != null) {
+        write402Error("--asset cannot be used with --inspect");
+        return;
+      }
+
+      const inlineFormat = inspect
         ? extractInlineFormatArg(clientArgs)
         : { args: clientArgs };
       const result = await deps.runWrappedClient({
@@ -259,7 +282,7 @@ export function createCallCommand(deps: CallDeps) {
         args: inlineFormat.args,
       });
 
-      if (listPaymentOptions) {
+      if (inspect) {
         if (result.kind !== "payment-required") {
           write402Error("server did not return an x402 payment challenge");
           return;
@@ -272,11 +295,24 @@ export function createCallCommand(deps: CallDeps) {
           result.response,
           result.url,
         );
-        printPaymentOptions(format, getPaymentOptions(paymentRequired.accepts));
+        printPaymentRequirementInspection(
+          format,
+          getPaymentRequirementInspection(paymentRequired),
+        );
         return;
       }
 
       const { resolved } = await deps.loadRequiredConfig();
+      const activeConfig =
+        asset == null
+          ? resolved
+          : {
+              ...resolved,
+              payment: {
+                ...resolved.payment,
+                asset,
+              },
+            };
 
       if (result.kind === "completed") {
         writeOutcomeOutput(result);
@@ -302,7 +338,7 @@ export function createCallCommand(deps: CallDeps) {
           preflightBalanceDeps:
             deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps,
         },
-        config: resolved,
+        config: activeConfig,
         tool: result.tool,
         clientArgs,
         printPaymentInfo: paymentInfo,

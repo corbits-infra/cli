@@ -1222,7 +1222,7 @@ await t.test("wrapped client runner", async (t) => {
 
 await t.test("call command", async (t) => {
   await t.test(
-    "lists payment options from a body-based x402 challenge without paying",
+    "prints parsed requirements from a body-based x402 challenge without paying",
     async (t) => {
       let buildPaymentRetryHeaderCalls = 0;
       const call = createCallCommand({
@@ -1264,23 +1264,26 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdout(async () => {
         await call.handler({
-          listPaymentOptions: true,
+          inspect: true,
           paymentInfo: false,
+          asset: undefined,
           format: "table",
           tool: "curl",
           args: ["https://example.com"],
         });
       });
 
-      t.match(stdout, /Asset/);
+      t.match(stdout, /x402 Version: 1/);
+      t.match(stdout, /Scheme/);
       t.match(stdout, /USDT/);
+      t.match(stdout, /receiver/);
       t.match(stdout, /0\.010000/);
       t.equal(buildPaymentRetryHeaderCalls, 0);
     },
   );
 
   await t.test(
-    "lists payment options from a header-based x402 challenge in json",
+    "prints parsed requirements from a header-based x402 challenge in json",
     async (t) => {
       const call = createCallCommand({
         loadRequiredConfig: async () => {
@@ -1326,27 +1329,115 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdout(async () => {
         await call.handler({
-          listPaymentOptions: true,
+          inspect: true,
           paymentInfo: false,
+          asset: undefined,
           format: "json",
           tool: "curl",
           args: ["https://example.com"],
         });
       });
 
-      t.same(JSON.parse(stdout), [
-        {
-          asset: "USDC",
-          address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-          amount: "0.005000",
-          network: "solana-devnet",
+      t.same(JSON.parse(stdout), {
+        version: 2,
+        resource: {
+          url: "https://example.com",
+          method: "POST",
         },
-      ]);
+        requirements: [
+          {
+            scheme: "exact",
+            network: "solana-devnet",
+            asset: "USDC",
+            assetAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            amount: "0.005000",
+            payTo: "receiver",
+            maxTimeoutSeconds: 60,
+            extra: { decimals: 6 },
+          },
+        ],
+      });
     },
   );
 
   await t.test(
-    "accepts -f yaml after wrapped args in list-payment-options mode",
+    "prints parsed requirements from a v1 header-based x402 challenge in json",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => {
+          throw new Error("should not load required config");
+        },
+        buildPaymentRetryHeader: async () => {
+          throw new Error("should not build payment header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response("", {
+              status: 402,
+              statusText: "Payment Required",
+              headers: {
+                "X-PAYMENT-REQUIRED": Buffer.from(
+                  JSON.stringify({
+                    x402Version: 1,
+                    accepts: [
+                      {
+                        scheme: "exact",
+                        network: "solana-mainnet-beta",
+                        maxAmountRequired: "2500",
+                        resource: "https://example.com",
+                        description: "pay",
+                        payTo: "receiver",
+                        maxTimeoutSeconds: 60,
+                        asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                        extra: { decimals: 6 },
+                      },
+                    ],
+                  }),
+                  "utf8",
+                ).toString("base64"),
+              },
+            }),
+          }),
+      });
+
+      const stdout = await captureStdout(async () => {
+        await call.handler({
+          inspect: true,
+          paymentInfo: false,
+          asset: undefined,
+          format: "json",
+          tool: "curl",
+          args: ["https://example.com"],
+        });
+      });
+
+      t.same(JSON.parse(stdout), {
+        version: 1,
+        resource: {
+          url: "https://example.com",
+          description: "pay",
+        },
+        requirements: [
+          {
+            scheme: "exact",
+            network: "solana-mainnet-beta",
+            asset: "USDT",
+            assetAddress: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+            amount: "0.002500",
+            payTo: "receiver",
+            maxTimeoutSeconds: 60,
+            extra: { decimals: 6 },
+          },
+        ],
+      });
+    },
+  );
+
+  await t.test(
+    "accepts -f yaml after wrapped args in inspect mode",
     async (t) => {
       const calls: string[][] = [];
       const call = createCallCommand({
@@ -1387,22 +1478,25 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdout(async () => {
         await call.handler({
-          listPaymentOptions: true,
+          inspect: true,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com", "-f", "yaml"],
         });
       });
 
+      t.match(stdout, /version: 1/);
       t.match(stdout, /asset: USDT/);
+      t.match(stdout, /payTo: receiver/);
       t.match(stdout, /amount: "0\.010000"/);
       t.same(calls, [["https://example.com"]]);
     },
   );
 
   await t.test(
-    "accepts --format=json after wrapped args in list-payment-options mode",
+    "accepts --format=json after wrapped args in inspect mode",
     async (t) => {
       const calls: string[][] = [];
       const call = createCallCommand({
@@ -1443,28 +1537,40 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdout(async () => {
         await call.handler({
-          listPaymentOptions: true,
+          inspect: true,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com", "--format=json"],
         });
       });
 
-      t.same(JSON.parse(stdout), [
-        {
-          asset: "USDT",
-          address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-          amount: "0.010000",
-          network: "solana-mainnet-beta",
+      t.same(JSON.parse(stdout), {
+        version: 1,
+        resource: {
+          url: "https://example.com",
+          description: "pay",
         },
-      ]);
+        requirements: [
+          {
+            scheme: "exact",
+            network: "solana-mainnet-beta",
+            asset: "USDT",
+            assetAddress: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+            amount: "0.010000",
+            payTo: "receiver",
+            maxTimeoutSeconds: 60,
+            extra: { decimals: 6 },
+          },
+        ],
+      });
       t.same(calls, [["https://example.com"]]);
     },
   );
 
   await t.test(
-    "errors clearly when list-payment-options does not receive an x402 challenge",
+    "errors clearly when inspect does not receive an x402 challenge",
     async (t) => {
       const priorExitCode = process.exitCode;
       process.exitCode = undefined;
@@ -1489,8 +1595,9 @@ await t.test("call command", async (t) => {
 
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: true,
+          inspect: true,
           paymentInfo: false,
+          asset: undefined,
           format: "table",
           tool: "curl",
           args: ["https://example.com"],
@@ -1499,6 +1606,109 @@ await t.test("call command", async (t) => {
 
       t.match(stderr, /server did not return an x402 payment challenge/);
       t.equal(process.exitCode, 1);
+    },
+  );
+
+  await t.test("rejects --asset with --inspect", async (t) => {
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    t.teardown(() => {
+      process.exitCode = priorExitCode;
+    });
+
+    const call = createCallCommand({
+      loadRequiredConfig: async () => {
+        throw new Error("should not load required config");
+      },
+      buildPaymentRetryHeader: async () => {
+        throw new Error("should not build payment header");
+      },
+      runWrappedClient: async () => {
+        throw new Error("should not run wrapped client");
+      },
+    });
+
+    const stderr = await captureStderr(async () => {
+      await call.handler({
+        inspect: true,
+        paymentInfo: false,
+        asset: "USDT",
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+    });
+
+    t.match(stderr, /--asset cannot be used with --inspect/);
+    t.equal(process.exitCode, 1);
+  });
+
+  await t.test(
+    "passes the selected asset through preflight and payment retry",
+    async (t) => {
+      let preflightAsset: string | undefined;
+      let retryAsset: string | undefined;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async ({ config }) => {
+          retryAsset = config.payment.asset;
+          return {
+            detectedVersion: 1,
+            header: { name: "X-PAYMENT", value: "paid" },
+            paymentInfo: {
+              amount: "1000",
+              asset: "USDC",
+              network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                tool: "curl",
+                url: "https://example.com",
+                requestInit: { method: "GET" },
+                response: new Response(
+                  JSON.stringify({
+                    x402Version: 1,
+                    accepts: [
+                      {
+                        scheme: "exact",
+                        network: "solana-mainnet-beta",
+                        maxAmountRequired: "1000",
+                        resource: "https://example.com",
+                        description: "pay",
+                        payTo: "receiver",
+                        maxTimeoutSeconds: 60,
+                        asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                      },
+                    ],
+                  }),
+                  { status: 402, statusText: "Payment Required" },
+                ),
+              })
+            : createCompletedResult({
+                exitCode: 0,
+                stdout: "body",
+                stderr: "",
+              }),
+        checkPreflightBalance: async (config) => {
+          preflightAsset = config.payment.asset;
+        },
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        asset: "USDT",
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(preflightAsset, "USDT");
+      t.equal(retryAsset, "USDT");
     },
   );
 
@@ -1528,8 +1738,9 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdout(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1537,8 +1748,9 @@ await t.test("call command", async (t) => {
       });
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1604,8 +1816,9 @@ await t.test("call command", async (t) => {
       });
 
       await call.handler({
-        listPaymentOptions: false,
+        inspect: false,
         paymentInfo: false,
+        asset: undefined,
         format: undefined,
         tool: "curl",
         args: ["https://example.com"],
@@ -1666,8 +1879,9 @@ await t.test("call command", async (t) => {
       });
 
       await call.handler({
-        listPaymentOptions: false,
+        inspect: false,
         paymentInfo: false,
+        asset: undefined,
         format: undefined,
         tool: "curl",
         args: ["https://example.com"],
@@ -1733,8 +1947,9 @@ await t.test("call command", async (t) => {
 
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: true,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1792,8 +2007,9 @@ await t.test("call command", async (t) => {
 
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: true,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1848,8 +2064,9 @@ await t.test("call command", async (t) => {
 
       const output = await captureCombinedOutput(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: true,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1903,8 +2120,9 @@ await t.test("call command", async (t) => {
 
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: true,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -1963,8 +2181,9 @@ await t.test("call command", async (t) => {
 
       const output = await captureCombinedOutput(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: true,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -2020,8 +2239,9 @@ await t.test("call command", async (t) => {
 
       const stderr = await captureStderr(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -2053,8 +2273,9 @@ await t.test("call command", async (t) => {
 
       const stdout = await captureStdoutBytes(async () => {
         await call.handler({
-          listPaymentOptions: false,
+          inspect: false,
           paymentInfo: false,
+          asset: undefined,
           format: undefined,
           tool: "curl",
           args: ["https://example.com"],
@@ -2093,8 +2314,9 @@ await t.test("call command", async (t) => {
 
     const stderr = await captureStderr(async () => {
       await call.handler({
-        listPaymentOptions: false,
+        inspect: false,
         paymentInfo: false,
+        asset: undefined,
         format: undefined,
         tool: "curl",
         args: ["https://example.com"],
@@ -2140,8 +2362,9 @@ await t.test("call command", async (t) => {
 
     const stderr = await captureStderr(async () => {
       await call.handler({
-        listPaymentOptions: false,
+        inspect: false,
         paymentInfo: true,
+        asset: undefined,
         format: undefined,
         tool: "curl",
         args: ["https://example.com"],
