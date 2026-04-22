@@ -133,6 +133,41 @@ wallet_id = "primary-evm"
   );
 
   await t.test(
+    "parses spending confirmation thresholds and resolves them for call-time policy",
+    async (t) => {
+      const parsed = parseConfig(`version = 1
+
+[preferences]
+format = "table"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "devnet"
+
+[spending]
+confirm_above_usd = "0.25"
+
+[wallets.solana]
+address = "7xKX..."
+kind = "keypair"
+path = "~/.config/corbits/keys/devnet.json"
+`);
+
+      t.same(parsed.spending, {
+        confirm_above_usd: "0.25",
+      });
+      t.same(resolveConfig(parsed).spending, {
+        confirmAboveUsd: "0.25",
+      });
+      t.match(
+        stringifyConfig(parsed),
+        /\[spending\]\nconfirm_above_usd = "0\.25"/,
+      );
+      t.end();
+    },
+  );
+
+  await t.test(
     "accepts CAIP-2 network identifiers and normalizes them to CLI names",
     async (t) => {
       const parsed = parseConfig(`version = 1
@@ -315,6 +350,28 @@ extra = "nope"
 `,
         ),
       /Unknown wallets\.evm key "extra"/,
+    );
+
+    t.throws(
+      () =>
+        parseConfig(`version = 1
+
+[preferences]
+format = "table"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "devnet"
+
+[spending]
+confirm_above_usd = 0.25
+
+[wallets.solana]
+address = "7xKX..."
+kind = "keypair"
+path = "~/.config/corbits/keys/devnet.json"
+`),
+      /Invalid config: spending\.confirm_above_usd must be a string/,
     );
 
     t.throws(() => parseConfig("[preferences"), /Invalid config TOML/);

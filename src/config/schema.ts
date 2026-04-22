@@ -63,6 +63,11 @@ const PaymentSectionSchema = type({
   "rpc_url_overrides?": "object",
 });
 
+const SpendingSectionSchema = type({
+  "+": "reject",
+  "confirm_above_usd?": "string",
+});
+
 const WalletsSectionSchema = type({
   "+": "reject",
   "solana?": "object",
@@ -74,6 +79,7 @@ const ConfigFileSchema = type({
   version: "1",
   preferences: PreferencesSchema,
   payment: PaymentSectionSchema,
+  "spending?": SpendingSectionSchema,
   wallets: WalletsSectionSchema,
 });
 type ConfigFile = typeof ConfigFileSchema.infer;
@@ -94,6 +100,9 @@ export type CorbitsConfig = {
   payment: {
     network: PaymentNetwork;
     rpc_url_overrides?: RpcUrlOverrides;
+  };
+  spending?: {
+    confirm_above_usd?: string;
   };
   wallets: WalletRegistry;
 };
@@ -128,6 +137,9 @@ export type ResolvedConfig = {
     asset: string;
     rpcUrl: string;
   };
+  spending?: {
+    confirmAboveUsd?: string;
+  };
   activeWallet: ResolvedWallet;
 };
 
@@ -145,6 +157,7 @@ type ConfigInitInput = {
   rpcUrl?: string;
   format?: OutputFormat;
   apiUrl?: string;
+  confirmAboveUsd?: string;
 } & WalletInputs;
 
 export type ConfigUpdateInput = {
@@ -152,6 +165,7 @@ export type ConfigUpdateInput = {
   rpcUrl?: string;
   format?: OutputFormat;
   apiUrl?: string;
+  confirmAboveUsd?: string;
 } & WalletInputs;
 
 export const DEFAULT_API_URL = "https://api.corbits.dev";
@@ -294,6 +308,33 @@ function validateAbsoluteUrl(value: string, field: string): string {
   return value;
 }
 
+function normalizeUsdAmountString(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    throw new ConfigError(
+      `Invalid ${field} "${value}". Expected a non-negative USD amount like 0.25`,
+    );
+  }
+
+  const [wholePart, fractionalPart = ""] = trimmed.split(".");
+  const normalizedWhole = (wholePart ?? "0").replace(/^0+(?=\d)/, "");
+  const normalizedFractional = fractionalPart.replace(/0+$/, "");
+
+  return normalizedFractional.length === 0
+    ? normalizedWhole
+    : `${normalizedWhole}.${normalizedFractional}`;
+}
+
+export function parseUsdAmountValue(value: unknown, field: string): string {
+  return normalizeUsdAmountString(
+    requireConfigString(
+      value,
+      `${field} must be a non-negative USD amount like 0.25`,
+    ),
+    field,
+  );
+}
+
 function normalizeRpcUrlOverrides(
   overrides: RpcUrlOverrides | undefined,
 ): RpcUrlOverrides | undefined {
@@ -327,6 +368,31 @@ function parseRpcUrlOverrides(value: unknown): RpcUrlOverrides | undefined {
     );
   }
   return normalizeRpcUrlOverrides(overrides);
+}
+
+function parseSpendingSection(
+  value: unknown,
+): CorbitsConfig["spending"] | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const result = SpendingSectionSchema(value);
+  if (result instanceof type.errors) {
+    throw new ConfigError(`Config spending: ${result.summary}`);
+  }
+
+  const spending = result as typeof SpendingSectionSchema.infer;
+  if (spending.confirm_above_usd == null) {
+    return undefined;
+  }
+
+  return {
+    confirm_above_usd: parseUsdAmountValue(
+      spending.confirm_above_usd,
+      "spending.confirm_above_usd",
+    ),
+  };
 }
 
 function parseWalletConfig(
@@ -385,6 +451,8 @@ function formatConfigError(errors: InstanceType<typeof type.errors>): string {
   if (joinedPath === "preferences")
     return "Config preferences section is required";
   if (joinedPath === "payment") return "Config payment section is required";
+  if (joinedPath === "spending" && error.code === "predicate")
+    return "Config spending section must be a table";
   if (joinedPath === "wallets") return "Config wallets section is required";
   if (joinedPath === "preferences.format")
     return 'Config preferences.format must be "table", "json", or "yaml"';
@@ -551,6 +619,16 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
       network,
       ...(rpcOverride == null ? {} : { rpc_url_overrides: rpcOverride }),
     },
+    ...(input.confirmAboveUsd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              input.confirmAboveUsd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
     wallets,
   });
 }
@@ -598,6 +676,19 @@ export function updateConfig(
       network: targetNetwork,
       ...(rpcOverride == null ? {} : { rpc_url_overrides: rpcOverride }),
     },
+    ...(input.confirmAboveUsd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              input.confirmAboveUsd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
+    ...(input.confirmAboveUsd == null && config.spending != null
+      ? { spending: config.spending }
+      : {}),
     wallets: mergeWalletRegistry(config.wallets, input),
   };
   requireWalletForFamily(
@@ -634,6 +725,7 @@ export function parseConfig(text: string): CorbitsConfig {
   const rpcUrlOverrides = parseRpcUrlOverrides(
     config.payment.rpc_url_overrides,
   );
+  const spending = parseSpendingSection(config.spending);
   const parsed: CorbitsConfig = {
     version: config.version,
     preferences: {
@@ -652,6 +744,7 @@ export function parseConfig(text: string): CorbitsConfig {
         ? {}
         : { rpc_url_overrides: rpcUrlOverrides }),
     },
+    ...(spending == null ? {} : { spending }),
     wallets: normalizeWalletRegistry({
       ...(solanaWallet == null ? {} : { solana: solanaWallet }),
       ...(evmWallet == null ? {} : { evm: evmWallet }),
@@ -681,6 +774,16 @@ export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
         ? {}
         : { rpc_url_overrides: rpcUrlOverrides }),
     },
+    ...(config.spending?.confirm_above_usd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              config.spending.confirm_above_usd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
     wallets: normalizeWalletRegistry(config.wallets),
   };
 }
@@ -733,6 +836,11 @@ export function resolveConfig(config: CorbitsConfig): ResolvedConfig {
       address: activeWallet.address,
       asset: defaults.asset,
       rpcUrl,
+    },
+    spending: {
+      ...(config.spending?.confirm_above_usd == null
+        ? {}
+        : { confirmAboveUsd: config.spending.confirm_above_usd }),
     },
     activeWallet,
   };

@@ -61,6 +61,7 @@ corbits call curl https://api.example.x402.org/data \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"key":"value"}'
+corbits call --yes curl https://api.example.x402.org/resource
 corbits call --payment-info curl https://api.example.x402.org/resource
 corbits call --save-response curl https://api.example.x402.org/resource
 corbits call wget --method=POST https://api.example.x402.org/resource
@@ -83,6 +84,14 @@ detect and handle a `402` challenge automatically.
 
 If a wrapped request still returns `402` after payment, Corbits exits non-zero
 and prints an error.
+
+If `spending.confirm_above_usd` is configured, Corbits inspects the selected
+payment option before signing. When the normalized USD-equivalent amount exceeds
+that threshold, `call` prompts for confirmation on an interactive terminal.
+Use `--yes` to bypass that prompt. Corbits refuses to guess when the selected
+asset cannot be normalized safely to USD and tells you to inspect the challenge
+first instead. `EURC` is not supported by this spending-limit normalization yet,
+so Corbits skips the threshold check for `EURC` payments.
 
 When `--payment-info` is set, successful paid retries also print payment
 metadata to `stderr`:
@@ -134,6 +143,7 @@ corbits config init --network devnet --solana-address 7xKX... --solana-ows prima
 corbits config set --evm-address 0x1234 --evm-ows primary-evm
 corbits config set --network base
 corbits config set --rpc-url https://mainnet.base.org
+corbits config set --confirm-above-usd 0.25
 corbits config set --format yaml --api-url https://staging.corbits.dev
 ```
 
@@ -143,7 +153,9 @@ the config path and effective expanded wallet path when the active wallet uses a
 The config file stores the selected payment network and wallet records. Effective payment
 address is resolved from the active wallet, and asset/RPC URL are resolved from network
 defaults. `--rpc-url` stores a network-scoped override, so switching networks only applies
-the override for the selected network.
+the override for the selected network. `--confirm-above-usd` stores a spending
+policy that prompts before paying when a selected x402 call exceeds the
+configured USD threshold.
 
 ### Output formats
 

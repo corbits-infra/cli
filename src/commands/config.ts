@@ -37,6 +37,7 @@ type ConfigMutationArgs = {
   evmOws: string | undefined;
   format: OutputFormat | undefined;
   apiUrl: string | undefined;
+  confirmAboveUsd: string | undefined;
 };
 
 function stringMutationOption(long: string, description: string) {
@@ -104,6 +105,10 @@ const configMutationArgs = {
     description: "Default output format",
   }),
   apiUrl: stringMutationOption("api-url", "Corbits API base URL"),
+  confirmAboveUsd: stringMutationOption(
+    "confirm-above-usd",
+    "Prompt before paying when a call costs more than this USD amount",
+  ),
 };
 
 function formatMutationValue(value: unknown): string {
@@ -133,6 +138,9 @@ function buildConfigMutationInput(args: ConfigMutationArgs): ConfigUpdateInput {
     ...(args.evmOws == null ? {} : { evmOws: args.evmOws }),
     ...(args.format == null ? {} : { format: args.format }),
     ...(args.apiUrl == null ? {} : { apiUrl: args.apiUrl }),
+    ...(args.confirmAboveUsd == null
+      ? {}
+      : { confirmAboveUsd: args.confirmAboveUsd }),
   };
 }
 
@@ -204,6 +212,12 @@ function buildMutationEntries(
   }
   if (input.apiUrl != null) {
     entries.push({ key: "api_url", value: config.preferences.api_url });
+  }
+  if (input.confirmAboveUsd != null) {
+    entries.push({
+      key: "spending_confirm_above_usd",
+      value: config.spending?.confirm_above_usd,
+    });
   }
   if (shouldIncludeResolvedPayment(input)) {
     entries.push({ key: "payment_address", value: resolved.payment.address });
@@ -298,6 +312,9 @@ export const configInit = command({
       ...(args.evmAddress == null ? {} : { evmAddress: args.evmAddress }),
       ...(args.evmPath == null ? {} : { evmPath: args.evmPath }),
       ...(args.evmOws == null ? {} : { evmOws: args.evmOws }),
+      ...(args.confirmAboveUsd == null
+        ? {}
+        : { confirmAboveUsd: args.confirmAboveUsd }),
     });
 
     const resolved = resolveConfig(config);
@@ -312,6 +329,14 @@ export const configInit = command({
         ...(args.rpcUrl == null
           ? []
           : [["payment_rpc_url_override", args.rpcUrl]]),
+        ...(args.confirmAboveUsd == null
+          ? []
+          : [
+              [
+                "spending_confirm_above_usd",
+                config.spending?.confirm_above_usd ?? "",
+              ],
+            ]),
       ],
       {
         status: "ok",
@@ -322,6 +347,11 @@ export const configInit = command({
         ...(args.rpcUrl == null
           ? {}
           : { payment_rpc_url_override: args.rpcUrl }),
+        ...(args.confirmAboveUsd == null
+          ? {}
+          : {
+              spending_confirm_above_usd: config.spending?.confirm_above_usd,
+            }),
       },
     );
   },

@@ -7,6 +7,17 @@ import {
   rest,
   string,
 } from "cmd-ts";
+import { createInterface } from "node:readline/promises";
+import {
+  caip2ToChainId,
+  isKnownAsset,
+  lookupKnownAsset,
+} from "@faremeter/info/evm";
+import {
+  caip2ToCluster,
+  isKnownSPLToken,
+  lookupKnownSPLToken,
+} from "@faremeter/info/solana";
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
@@ -17,12 +28,15 @@ import {
   buildPaymentRetryHeader,
   extractPaymentRequiredResponse,
   extractPaymentResponseTransaction,
+  formatPaymentRequirementMismatch,
   type PaymentMetadata,
+  selectPaymentRequirement,
 } from "../payment/signer.js";
 import {
   getPaymentRequirementInspection,
   printPaymentRequirementInspection,
 } from "../payment/options.js";
+import { formatPaymentOptionNetwork } from "../payment/requirements.js";
 import {
   checkPreflightBalance,
   defaultPreflightBalanceDeps,
@@ -48,6 +62,8 @@ type CallDeps = {
   buildPaymentRetryHeader: typeof buildPaymentRetryHeader;
   runWrappedClient: typeof runWrappedClient;
   appendHistoryRecord?: typeof appendHistoryRecord;
+  canPromptForConfirmation?: () => boolean;
+  confirmPayment?: (args: ConfirmPaymentArgs) => Promise<boolean>;
   checkPreflightBalance?: (
     config: ResolvedConfig,
     firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
@@ -60,8 +76,177 @@ type ResponseStatusMetadata = {
   status: number | null;
 };
 
+type ConfirmPaymentArgs = {
+  thresholdUsd: string;
+  amountUsd: string;
+  assetAmount: string;
+  assetDisplay: string;
+  networkDisplay: string;
+};
+
+const SPENDING_LIMIT_UNSUPPORTED_SYMBOLS = new Set(["EURC"]);
+
 function formatResponseStatus(status: number | null): string {
   return status == null ? "unknown" : `HTTP ${status}`;
+}
+
+function isSupportedUsdNormalizationAsset(args: {
+  network: string;
+  symbol: string;
+}): boolean {
+  if (SPENDING_LIMIT_UNSUPPORTED_SYMBOLS.has(args.symbol)) {
+    return false;
+  }
+
+  if (args.network.startsWith("solana:")) {
+    const cluster = caip2ToCluster(args.network);
+    if (cluster == null || !isKnownSPLToken(args.symbol)) {
+      return false;
+    }
+
+    const token = lookupKnownSPLToken(cluster, args.symbol);
+    return token != null;
+  }
+
+  if (args.network.startsWith("eip155:")) {
+    const chainId = caip2ToChainId(args.network);
+    if (chainId == null || !isKnownAsset(args.symbol)) {
+      return false;
+    }
+
+    const asset = lookupKnownAsset(chainId, args.symbol);
+    return asset != null;
+  }
+
+  return false;
+}
+
+function normalizeDecimalString(value: string): string {
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    throw new Error(`invalid decimal amount "${value}"`);
+  }
+
+  const [wholePart, fractionalPart = ""] = trimmed.split(".");
+  const normalizedWhole = (wholePart ?? "0").replace(/^0+(?=\d)/, "");
+  const normalizedFractional = fractionalPart.replace(/0+$/, "");
+
+  return normalizedFractional.length === 0
+    ? normalizedWhole
+    : `${normalizedWhole}.${normalizedFractional}`;
+}
+
+function formatBaseUnitsAsDecimalString(
+  amount: string,
+  decimals: number,
+): string {
+  if (!/^\d+$/.test(amount)) {
+    throw new Error(`invalid base-unit amount "${amount}"`);
+  }
+
+  const whole = amount.padStart(decimals + 1, "0");
+  if (decimals === 0) {
+    return normalizeDecimalString(whole);
+  }
+
+  const splitIndex = whole.length - decimals;
+  return normalizeDecimalString(
+    `${whole.slice(0, splitIndex)}.${whole.slice(splitIndex)}`,
+  );
+}
+
+function compareNormalizedDecimalStrings(left: string, right: string): number {
+  const [leftWhole, leftFractional = ""] = left.split(".");
+  const [rightWhole, rightFractional = ""] = right.split(".");
+  const normalizedLeftWhole = leftWhole ?? "0";
+  const normalizedRightWhole = rightWhole ?? "0";
+  const wholeLengthDifference =
+    normalizedLeftWhole.length - normalizedRightWhole.length;
+  if (wholeLengthDifference !== 0) {
+    return wholeLengthDifference > 0 ? 1 : -1;
+  }
+
+  if (normalizedLeftWhole !== normalizedRightWhole) {
+    return normalizedLeftWhole > normalizedRightWhole ? 1 : -1;
+  }
+
+  const fractionLength = Math.max(
+    leftFractional.length,
+    rightFractional.length,
+  );
+  const paddedLeft = leftFractional.padEnd(fractionLength, "0");
+  const paddedRight = rightFractional.padEnd(fractionLength, "0");
+
+  if (paddedLeft === paddedRight) {
+    return 0;
+  }
+
+  return paddedLeft > paddedRight ? 1 : -1;
+}
+
+function normalizePaymentToUsd(
+  selection: ReturnType<typeof selectPaymentRequirement>,
+) {
+  if (selection.kind !== "selected") {
+    throw new Error("expected a selected payment requirement");
+  }
+
+  const { selected } = selection;
+  if (selected.symbol == null) {
+    throw new Error(
+      "selected payment asset could not be normalized to USD safely",
+    );
+  }
+
+  const canNormalizeSafely = isSupportedUsdNormalizationAsset({
+    network: selected.network,
+    symbol: selected.symbol,
+  });
+  if (!canNormalizeSafely) {
+    throw new Error(
+      "selected payment asset could not be normalized to USD safely",
+    );
+  }
+  if (selected.decimals == null) {
+    throw new Error(
+      "selected payment amount is missing asset decimals, so USD normalization is not possible",
+    );
+  }
+
+  return {
+    amountUsd: formatBaseUnitsAsDecimalString(
+      selected.amount,
+      selected.decimals,
+    ),
+    assetAmount: formatDisplayTokenAmount({
+      amount: selected.amount,
+      asset: selected.symbol,
+      decimals: selected.decimals,
+    }),
+    assetDisplay: selected.symbol,
+    networkDisplay: formatPaymentOptionNetwork(selected.network),
+  };
+}
+
+function canPromptForConfirmation(): boolean {
+  return process.stdin.isTTY && process.stderr.isTTY;
+}
+
+async function promptForPaymentConfirmation(
+  args: ConfirmPaymentArgs,
+): Promise<boolean> {
+  const prompt = `This call will pay $${args.amountUsd} USD (${args.assetAmount} ${args.assetDisplay} on ${args.networkDisplay}), which exceeds spending.confirmAboveUsd=$${args.thresholdUsd}. Continue? [y/N] `;
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  try {
+    const answer = await readline.question(prompt);
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
 }
 
 function formatPaymentSummary(args: {
@@ -324,6 +509,94 @@ async function handle402Retry(args: {
   );
 }
 
+async function maybeConfirmPayment(args: {
+  deps: Pick<CallDeps, "canPromptForConfirmation" | "confirmPayment">;
+  config: ResolvedConfig;
+  yes: boolean;
+  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+}): Promise<boolean> {
+  const thresholdUsd = args.config.spending?.confirmAboveUsd;
+  if (thresholdUsd == null) {
+    return true;
+  }
+
+  let paymentRequired;
+  try {
+    paymentRequired = await extractPaymentRequiredResponse(
+      args.firstAttempt.response.clone(),
+      args.firstAttempt.url,
+    );
+  } catch (err) {
+    write402Error(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+
+  const selection = selectPaymentRequirement({
+    accepts: paymentRequired.accepts,
+    config: args.config,
+  });
+  if (selection.kind !== "selected") {
+    write402Error(formatPaymentRequirementMismatch(args.config, selection));
+    return false;
+  }
+
+  if (
+    selection.selected.symbol != null &&
+    SPENDING_LIMIT_UNSUPPORTED_SYMBOLS.has(selection.selected.symbol)
+  ) {
+    return true;
+  }
+
+  let normalizedPayment;
+  try {
+    normalizedPayment = normalizePaymentToUsd(selection);
+  } catch (err) {
+    write402Error(
+      `${err instanceof Error ? err.message : String(err)}; use --inspect to review the payment challenge before retrying`,
+    );
+    return false;
+  }
+
+  if (
+    compareNormalizedDecimalStrings(
+      normalizeDecimalString(normalizedPayment.amountUsd),
+      normalizeDecimalString(thresholdUsd),
+    ) <= 0
+  ) {
+    return true;
+  }
+
+  if (args.yes) {
+    return true;
+  }
+
+  const promptAllowed =
+    args.deps.canPromptForConfirmation ?? canPromptForConfirmation;
+  if (!promptAllowed()) {
+    write402Error(
+      `payment of $${normalizedPayment.amountUsd} exceeds spending.confirmAboveUsd=$${thresholdUsd}, but confirmation requires an interactive terminal; rerun with --yes to continue`,
+    );
+    return false;
+  }
+
+  const confirmPayment =
+    args.deps.confirmPayment ?? promptForPaymentConfirmation;
+  const approved = await confirmPayment({
+    thresholdUsd,
+    amountUsd: normalizedPayment.amountUsd,
+    assetAmount: normalizedPayment.assetAmount,
+    assetDisplay: normalizedPayment.assetDisplay,
+    networkDisplay: normalizedPayment.networkDisplay,
+  });
+
+  if (approved) {
+    return true;
+  }
+
+  write402Error("payment cancelled");
+  return false;
+}
+
 export function createCallCommand(deps: CallDeps) {
   return command({
     name: "call",
@@ -344,6 +617,11 @@ export function createCallCommand(deps: CallDeps) {
         description:
           "Save the successful paid response body in local history when it is not streamed",
       }),
+      yes: flag({
+        long: "yes",
+        description:
+          "Skip interactive payment confirmation when a call exceeds spending.confirmAboveUsd",
+      }),
       asset: option({
         type: optional(string),
         long: "asset",
@@ -358,6 +636,7 @@ export function createCallCommand(deps: CallDeps) {
       inspect,
       paymentInfo,
       saveResponse,
+      yes,
       asset,
       format: formatArg,
       tool,
@@ -430,6 +709,21 @@ export function createCallCommand(deps: CallDeps) {
           write402Error(err instanceof Error ? err.message : String(err));
           return;
         }
+      }
+
+      if (
+        !(await maybeConfirmPayment({
+          deps: {
+            canPromptForConfirmation:
+              deps.canPromptForConfirmation ?? canPromptForConfirmation,
+            confirmPayment: deps.confirmPayment ?? promptForPaymentConfirmation,
+          },
+          config: activeConfig,
+          yes,
+          firstAttempt: result,
+        }))
+      ) {
+        return;
       }
 
       await handle402Retry({

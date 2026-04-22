@@ -27,6 +27,7 @@ async function seedConfig(options?: {
       evmOws: options?.includeEvmWallet === false ? undefined : "primary-evm",
       format: "table",
       apiUrl: "https://api.corbits.dev",
+      confirmAboveUsd: undefined,
       config: undefined,
     }),
   );
@@ -64,6 +65,7 @@ await t.test("config commands", async (t) => {
           evmOws: undefined,
           format: "table",
           apiUrl: "https://api.corbits.dev",
+          confirmAboveUsd: undefined,
           config: undefined,
         }),
       );
@@ -98,6 +100,7 @@ await t.test("config commands", async (t) => {
         evmOws: "primary-evm",
         format: undefined,
         apiUrl: undefined,
+        confirmAboveUsd: undefined,
         config: undefined,
       });
 
@@ -127,6 +130,7 @@ await t.test("config commands", async (t) => {
           evmOws: undefined,
           format: undefined,
           apiUrl: undefined,
+          confirmAboveUsd: undefined,
           config: undefined,
         }),
       );
@@ -155,6 +159,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: "json",
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -185,6 +190,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         /only one of --solana-path or --solana-ows/,
@@ -210,6 +216,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /requires --solana-address/,
@@ -236,6 +243,7 @@ await t.test("config commands", async (t) => {
               evmOws: "primary-evm",
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /requires --solana-address <addr> plus one of --solana-path <path> or --solana-ows <wallet-id> when --network devnet is selected/,
@@ -262,6 +270,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /requires --evm-address <addr> plus one of --evm-path <path> or --evm-ows <wallet-id> when --network base-sepolia is selected/,
@@ -290,6 +299,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -326,6 +336,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -342,6 +353,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -394,6 +406,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -438,6 +451,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: "yaml",
             apiUrl: "https://staging.corbits.dev",
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -449,6 +463,55 @@ await t.test("config commands", async (t) => {
         const written = await readTempConfigFile(configHome);
         t.match(written, /format = "yaml"/);
         t.match(written, /api_url = "https:\/\/staging\.corbits\.dev"/);
+        t.end();
+      },
+    );
+
+    await t.test(
+      "stores the payment confirmation threshold and exposes it in config show",
+      async (t) => {
+        const configHome = withTempConfigHome(t);
+        await seedConfig();
+
+        const output = await captureStdout(() =>
+          configSet.handler({
+            network: undefined,
+            rpcUrl: undefined,
+            solanaAddress: undefined,
+            solanaPath: undefined,
+            solanaOws: undefined,
+            evmAddress: undefined,
+            evmPath: undefined,
+            evmOws: undefined,
+            format: undefined,
+            apiUrl: undefined,
+            confirmAboveUsd: "0.25",
+            config: undefined,
+          }),
+        );
+
+        t.match(output, /spending_confirm_above_usd/);
+        t.match(output, /0\.25/);
+
+        const written = await readTempConfigFile(configHome);
+        t.match(written, /\[spending\]/);
+        t.match(written, /confirm_above_usd = "0\.25"/);
+
+        const shown = await captureStdout(() =>
+          configShow.handler({ format: "json", config: undefined }),
+        );
+        t.same(
+          (
+            JSON.parse(shown) as {
+              spending: {
+                confirm_above_usd?: string;
+              };
+            }
+          ).spending,
+          {
+            confirm_above_usd: "0.25",
+          },
+        );
         t.end();
       },
     );
@@ -472,6 +535,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: "yaml",
             apiUrl: "https://staging.corbits.dev",
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -513,6 +577,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         );
@@ -544,6 +609,7 @@ await t.test("config commands", async (t) => {
             evmOws: undefined,
             format: undefined,
             apiUrl: undefined,
+            confirmAboveUsd: undefined,
             config: undefined,
           }),
         /at least one flag/,
@@ -571,6 +637,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /Invalid payment network/,
@@ -589,6 +656,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /wallets\.evm is required/,
@@ -607,6 +675,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: "not-a-url",
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /preferences\.api_url/,
@@ -625,6 +694,7 @@ await t.test("config commands", async (t) => {
               evmOws: undefined,
               format: undefined,
               apiUrl: undefined,
+              confirmAboveUsd: undefined,
               config: undefined,
             }),
           /only one of --solana-path or --solana-ows/,
@@ -681,12 +751,14 @@ await t.test("config commands", async (t) => {
           payment: { network: string; address: string; rpc_url: string };
           active_wallet: { expanded_path?: string; address: string };
           path: string;
+          spending?: { confirm_above_usd?: string };
         };
         t.equal(parsed.payment.network, "mainnet-beta");
         t.equal(parsed.payment.address, "7xKX...");
         t.equal(parsed.payment.rpc_url, "https://api.mainnet-beta.solana.com");
         t.equal(parsed.path, getConfigPath());
         t.equal(parsed.active_wallet.address, "7xKX...");
+        t.notOk(parsed.spending);
         t.match(
           parsed.active_wallet.expanded_path ?? "",
           /\/\.config\/corbits\/keys\/solana\.json$/,

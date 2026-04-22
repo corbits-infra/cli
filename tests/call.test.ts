@@ -34,6 +34,7 @@ const resolvedConfig = {
     asset: "USDC",
     rpcUrl: "https://api.devnet.solana.com",
   },
+  spending: {},
   activeWallet: {
     kind: "keypair",
     family: "solana",
@@ -43,7 +44,9 @@ const resolvedConfig = {
   },
 } as const;
 
-function createLoadedConfig(): LoadedConfig {
+function createLoadedConfig(options?: {
+  confirmAboveUsd?: string;
+}): LoadedConfig {
   return {
     path: "/tmp/config.toml",
     config: {
@@ -55,6 +58,13 @@ function createLoadedConfig(): LoadedConfig {
       payment: {
         network: "devnet",
       },
+      ...(options?.confirmAboveUsd == null
+        ? {}
+        : {
+            spending: {
+              confirm_above_usd: options.confirmAboveUsd,
+            },
+          }),
       wallets: {
         solana: {
           kind: "keypair",
@@ -63,7 +73,14 @@ function createLoadedConfig(): LoadedConfig {
         },
       },
     },
-    resolved: resolvedConfig,
+    resolved: {
+      ...resolvedConfig,
+      spending: {
+        ...(options?.confirmAboveUsd == null
+          ? {}
+          : { confirmAboveUsd: options.confirmAboveUsd }),
+      },
+    },
   };
 }
 
@@ -1268,6 +1285,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: "table",
           tool: "curl",
@@ -1334,6 +1352,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: "json",
           tool: "curl",
@@ -1411,6 +1430,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: "json",
           tool: "curl",
@@ -1485,6 +1505,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1545,6 +1566,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1604,6 +1626,7 @@ await t.test("call command", async (t) => {
           inspect: true,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: "table",
           tool: "curl",
@@ -1640,6 +1663,7 @@ await t.test("call command", async (t) => {
         inspect: true,
         paymentInfo: false,
         saveResponse: false,
+        yes: false,
         asset: "USDT",
         format: undefined,
         tool: "curl",
@@ -1710,6 +1734,7 @@ await t.test("call command", async (t) => {
         inspect: false,
         paymentInfo: false,
         saveResponse: false,
+        yes: false,
         asset: "USDT",
         format: undefined,
         tool: "curl",
@@ -1718,6 +1743,366 @@ await t.test("call command", async (t) => {
 
       t.equal(preflightAsset, "USDT");
       t.equal(retryAsset, "USDT");
+    },
+  );
+
+  await t.test(
+    "prompts before paying when the selected amount exceeds spending.confirmAboveUsd",
+    async (t) => {
+      let confirmArgs:
+        | {
+            thresholdUsd: string;
+            amountUsd: string;
+            assetAmount: string;
+            assetDisplay: string;
+            networkDisplay: string;
+          }
+        | undefined;
+      let buildPaymentRetryHeaderCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () =>
+          createLoadedConfig({ confirmAboveUsd: "0.001" }),
+        canPromptForConfirmation: () => true,
+        confirmPayment: async (args) => {
+          confirmArgs = args;
+          return true;
+        },
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          return {
+            detectedVersion: 2,
+            header: {
+              name: "PAYMENT-SIGNATURE",
+              value: "paid-v2",
+            },
+            paymentInfo: {
+              amount: "2000",
+              asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+              assetSymbol: "USDC",
+              network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                tool: "curl",
+                url: "https://example.com",
+                requestInit: { method: "GET" },
+                response: new Response("", {
+                  status: 402,
+                  headers: {
+                    [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+                      JSON.stringify({
+                        x402Version: 2,
+                        resource: {
+                          url: "https://example.com",
+                          method: "GET",
+                        },
+                        accepts: [
+                          {
+                            scheme: "exact",
+                            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                            amount: "2000",
+                            payTo: "receiver",
+                            maxTimeoutSeconds: 60,
+                            asset:
+                              "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                            extra: { decimals: 6 },
+                          },
+                        ],
+                      }),
+                      "utf8",
+                    ).toString("base64"),
+                  },
+                }),
+              })
+            : createCompletedResult({
+                exitCode: 0,
+                stdout: "body",
+                stderr: "",
+              }),
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: false,
+        yes: false,
+        asset: undefined,
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(buildPaymentRetryHeaderCalls, 1);
+      t.same(confirmArgs, {
+        thresholdUsd: "0.001",
+        amountUsd: "0.002",
+        assetAmount: "0.002000",
+        assetDisplay: "USDC",
+        networkDisplay: "solana-devnet",
+      });
+    },
+  );
+
+  await t.test(
+    "fails closed when confirmation is required without an interactive terminal",
+    async (t) => {
+      const priorExitCode = process.exitCode;
+      process.exitCode = undefined;
+      t.teardown(() => {
+        process.exitCode = priorExitCode;
+      });
+
+      let buildPaymentRetryHeaderCalls = 0;
+      let confirmCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () =>
+          createLoadedConfig({ confirmAboveUsd: "0.001" }),
+        canPromptForConfirmation: () => false,
+        confirmPayment: async () => {
+          confirmCalls += 1;
+          return true;
+        },
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          throw new Error("should not build payment header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response("", {
+              status: 402,
+              headers: {
+                [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+                  JSON.stringify({
+                    x402Version: 2,
+                    resource: {
+                      url: "https://example.com",
+                      method: "GET",
+                    },
+                    accepts: [
+                      {
+                        scheme: "exact",
+                        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                        amount: "2000",
+                        payTo: "receiver",
+                        maxTimeoutSeconds: 60,
+                        asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                        extra: { decimals: 6 },
+                      },
+                    ],
+                  }),
+                  "utf8",
+                ).toString("base64"),
+              },
+            }),
+          }),
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: false,
+          yes: false,
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["https://example.com"],
+        });
+      });
+
+      t.match(
+        stderr,
+        /confirmation requires an interactive terminal; rerun with --yes to continue/,
+      );
+      t.equal(confirmCalls, 0);
+      t.equal(buildPaymentRetryHeaderCalls, 0);
+      t.equal(process.exitCode, 1);
+    },
+  );
+
+  await t.test(
+    "skips the confirmation prompt with --yes when the threshold is exceeded",
+    async (t) => {
+      let confirmCalls = 0;
+      let buildPaymentRetryHeaderCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () =>
+          createLoadedConfig({ confirmAboveUsd: "0.001" }),
+        canPromptForConfirmation: () => false,
+        confirmPayment: async () => {
+          confirmCalls += 1;
+          return true;
+        },
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          return {
+            detectedVersion: 2,
+            header: {
+              name: "PAYMENT-SIGNATURE",
+              value: "paid-v2",
+            },
+            paymentInfo: {
+              amount: "2000",
+              asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+              assetSymbol: "USDC",
+              network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                tool: "curl",
+                url: "https://example.com",
+                requestInit: { method: "GET" },
+                response: new Response("", {
+                  status: 402,
+                  headers: {
+                    [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+                      JSON.stringify({
+                        x402Version: 2,
+                        resource: {
+                          url: "https://example.com",
+                          method: "GET",
+                        },
+                        accepts: [
+                          {
+                            scheme: "exact",
+                            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                            amount: "2000",
+                            payTo: "receiver",
+                            maxTimeoutSeconds: 60,
+                            asset:
+                              "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                            extra: { decimals: 6 },
+                          },
+                        ],
+                      }),
+                      "utf8",
+                    ).toString("base64"),
+                  },
+                }),
+              })
+            : createCompletedResult({
+                exitCode: 0,
+                stdout: "body",
+                stderr: "",
+              }),
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: false,
+        yes: true,
+        asset: undefined,
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(confirmCalls, 0);
+      t.equal(buildPaymentRetryHeaderCalls, 1);
+    },
+  );
+
+  await t.test(
+    "skips spending confirmation for EURC until USD normalization is supported",
+    async (t) => {
+      let confirmCalls = 0;
+      let buildPaymentRetryHeaderCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () =>
+          createLoadedConfig({ confirmAboveUsd: "0.001" }),
+        canPromptForConfirmation: () => true,
+        confirmPayment: async () => {
+          confirmCalls += 1;
+          return true;
+        },
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          return {
+            detectedVersion: 2,
+            header: {
+              name: "PAYMENT-SIGNATURE",
+              value: "paid-v2",
+            },
+            paymentInfo: {
+              amount: "2000",
+              asset: "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
+              assetSymbol: "EURC",
+              network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                tool: "curl",
+                url: "https://example.com",
+                requestInit: { method: "GET" },
+                response: new Response("", {
+                  status: 402,
+                  headers: {
+                    [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+                      JSON.stringify({
+                        x402Version: 2,
+                        resource: {
+                          url: "https://example.com",
+                          method: "GET",
+                        },
+                        accepts: [
+                          {
+                            scheme: "exact",
+                            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                            amount: "2000",
+                            payTo: "receiver",
+                            maxTimeoutSeconds: 60,
+                            asset:
+                              "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
+                            extra: { decimals: 6 },
+                          },
+                        ],
+                      }),
+                      "utf8",
+                    ).toString("base64"),
+                  },
+                }),
+              })
+            : createCompletedResult({
+                exitCode: 0,
+                stdout: "body",
+                stderr: "",
+              }),
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: false,
+        yes: false,
+        asset: "EURC",
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(confirmCalls, 0);
+      t.equal(buildPaymentRetryHeaderCalls, 1);
     },
   );
 
@@ -1761,6 +2146,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: true,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1818,6 +2204,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: true,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1875,6 +2262,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: true,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "wget",
@@ -1924,6 +2312,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1935,6 +2324,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2004,6 +2394,7 @@ await t.test("call command", async (t) => {
         inspect: false,
         paymentInfo: false,
         saveResponse: false,
+        yes: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -2068,6 +2459,7 @@ await t.test("call command", async (t) => {
         inspect: false,
         paymentInfo: false,
         saveResponse: false,
+        yes: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -2137,6 +2529,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: true,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2198,6 +2591,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: true,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2256,6 +2650,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: true,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2313,6 +2708,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: true,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2375,6 +2771,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: true,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2434,6 +2831,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2469,6 +2867,7 @@ await t.test("call command", async (t) => {
           inspect: false,
           paymentInfo: false,
           saveResponse: false,
+          yes: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2511,6 +2910,7 @@ await t.test("call command", async (t) => {
         inspect: false,
         paymentInfo: false,
         saveResponse: false,
+        yes: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -2560,6 +2960,7 @@ await t.test("call command", async (t) => {
         inspect: false,
         paymentInfo: true,
         saveResponse: false,
+        yes: false,
         asset: undefined,
         format: undefined,
         tool: "curl",

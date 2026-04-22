@@ -27,6 +27,9 @@ type ConfigView = {
     rpc_url: string;
     rpc_url_override?: string;
   };
+  spending?: {
+    confirm_above_usd?: string;
+  };
   active_wallet:
     | {
         address: string;
@@ -90,6 +93,13 @@ function buildConfigView(loaded: LoadedConfig): ConfigView {
               ],
           }),
     },
+    ...(loaded.config.spending?.confirm_above_usd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: loaded.config.spending.confirm_above_usd,
+          },
+        }),
     active_wallet: buildActiveWalletView(loaded),
     wallets: loaded.config.wallets,
   };
@@ -125,6 +135,9 @@ export function printConfigView(
   writeLine(`Payment RPC URL: ${view.payment.rpc_url}`);
   if (view.payment.rpc_url_override != null) {
     writeLine(`Payment RPC override: ${view.payment.rpc_url_override}`);
+  }
+  if (view.spending?.confirm_above_usd != null) {
+    writeLine(`Confirm above USD: ${view.spending.confirm_above_usd}`);
   }
 
   if (view.active_wallet.kind === "keypair") {
