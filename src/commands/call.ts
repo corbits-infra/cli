@@ -28,11 +28,15 @@ import {
   defaultPreflightBalanceDeps,
   type PreflightBalanceDeps,
 } from "../payment/balance.js";
+import { appendHistoryRecord, createHistoryRecord } from "../history/store.js";
+import { parseCurlOutputTarget } from "../process/curl.js";
+import { hasFileOutputTarget } from "../process/output-target.js";
 import {
   type WrappedClient,
   type WrappedRunResult,
   runWrappedClient,
 } from "../process/wrapped-client.js";
+import { parseWgetOutputTarget } from "../process/wget.js";
 import {
   formatFlag,
   resolveOutputFormat,
@@ -43,6 +47,7 @@ type CallDeps = {
   loadRequiredConfig: typeof loadRequiredConfig;
   buildPaymentRetryHeader: typeof buildPaymentRetryHeader;
   runWrappedClient: typeof runWrappedClient;
+  appendHistoryRecord?: typeof appendHistoryRecord;
   checkPreflightBalance?: (
     config: ResolvedConfig,
     firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
@@ -64,13 +69,14 @@ function formatPaymentSummary(args: {
   responseStatus?: ResponseStatusMetadata;
 }): string {
   const { paymentInfo, responseStatus } = args;
+  const assetDisplay = paymentInfo.assetSymbol ?? paymentInfo.asset;
   const amount = formatDisplayTokenAmount({
     amount: paymentInfo.amount,
-    asset: paymentInfo.asset,
+    asset: assetDisplay,
     ...(paymentInfo.decimals == null ? {} : { decimals: paymentInfo.decimals }),
   });
   const parts = [
-    `Payment: ${amount} ${paymentInfo.asset} on ${paymentInfo.network}`,
+    `Payment: ${amount} ${assetDisplay} on ${paymentInfo.network}`,
   ];
 
   if (paymentInfo.txSignature != null) {
@@ -130,6 +136,39 @@ function write402Error(message: string): void {
   process.exitCode = 1;
 }
 
+function writeHistoryWarning(message: string): void {
+  process.stderr.write(`Warning: ${message}\n`);
+}
+
+function assertSaveResponseSupported(
+  tool: WrappedClient,
+  clientArgs: string[],
+): void {
+  if (tool === "curl") {
+    const outputTarget = parseCurlOutputTarget(clientArgs);
+    if (hasFileOutputTarget(outputTarget.bodyPath)) {
+      throw new Error(
+        "--save-response cannot be used with -o/--output; remove -o/--output or omit --save-response",
+      );
+    }
+    if (outputTarget.remoteName) {
+      throw new Error(
+        "--save-response cannot be used with -O/--remote-name; remove -O/--remote-name or omit --save-response",
+      );
+    }
+    return;
+  }
+
+  const bodyPath = parseWgetOutputTarget(clientArgs).bodyPath;
+  if (!hasFileOutputTarget(bodyPath)) {
+    return;
+  }
+
+  throw new Error(
+    "--save-response cannot be used with -O/--output-document; remove -O/--output-document or omit --save-response",
+  );
+}
+
 function extractInlineFormatArg(args: string[]): {
   args: string[];
   format?: OutputFormat;
@@ -173,6 +212,7 @@ async function handle402Retry(args: {
   deps: Pick<
     CallDeps,
     | "buildPaymentRetryHeader"
+    | "appendHistoryRecord"
     | "runWrappedClient"
     | "checkPreflightBalance"
     | "preflightBalanceDeps"
@@ -181,12 +221,14 @@ async function handle402Retry(args: {
   tool: WrappedClient;
   clientArgs: string[];
   printPaymentInfo: boolean;
+  saveResponse: boolean;
   firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
 }): Promise<void> {
   const checkPreflight =
     args.deps.checkPreflightBalance ?? checkPreflightBalance;
   const preflightBalanceDeps =
     args.deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps;
+  const persistHistory = args.deps.appendHistoryRecord ?? appendHistoryRecord;
 
   try {
     await checkPreflight(args.config, args.firstAttempt, preflightBalanceDeps);
@@ -205,7 +247,7 @@ async function handle402Retry(args: {
     tool: args.tool,
     args: args.clientArgs,
     extraHeader: payment.header,
-    streamOutput: true,
+    streamOutput: !args.saveResponse,
   });
   if (retry.kind === "completed" || retry.kind === "streamed-completed") {
     const settledTransaction = extractPaymentResponseTransaction(retry.headers);
@@ -223,6 +265,52 @@ async function handle402Retry(args: {
       ? { status: retry.status }
       : undefined;
     writeOutcomeOutput(retry, paidCallInfo, responseStatus);
+
+    const responseBody =
+      args.saveResponse && retry.kind === "completed"
+        ? Buffer.from(retry.stdout).toString("utf8")
+        : undefined;
+
+    if (retry.exitCode !== 0) {
+      return;
+    }
+
+    try {
+      await persistHistory(
+        createHistoryRecord({
+          tool: args.tool,
+          url: args.firstAttempt.url,
+          responseStatus: retry.status,
+          amount: payment.paymentInfo.amount,
+          asset: payment.paymentInfo.asset,
+          ...(payment.paymentInfo.assetSymbol == null
+            ? {}
+            : { assetSymbol: payment.paymentInfo.assetSymbol }),
+          ...(payment.paymentInfo.decimals == null
+            ? {}
+            : { decimals: payment.paymentInfo.decimals }),
+          network: formatPaymentNetworkDisplay(args.config.payment.network),
+          walletAddress: args.config.activeWallet.address,
+          walletKind: args.config.activeWallet.kind,
+          ...(typeof args.firstAttempt.requestInit.method === "string"
+            ? { method: args.firstAttempt.requestInit.method }
+            : {}),
+          ...(settledTransaction == null
+            ? {}
+            : { txSignature: settledTransaction }),
+        }),
+        responseBody == null ? undefined : { responseBody },
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeHistoryWarning(
+        args.saveResponse
+          ? `paid call succeeded, but history and saved response could not be persisted: ${message}`
+          : `paid call succeeded, but history could not be persisted: ${message}`,
+      );
+      return;
+    }
+
     return;
   }
 
@@ -251,6 +339,11 @@ export function createCallCommand(deps: CallDeps) {
         description:
           "Print paid-call metadata and response status to stderr after a paid retry",
       }),
+      saveResponse: flag({
+        long: "save-response",
+        description:
+          "Save the successful paid response body in local history when it is not streamed",
+      }),
       asset: option({
         type: optional(string),
         long: "asset",
@@ -264,6 +357,7 @@ export function createCallCommand(deps: CallDeps) {
     handler: async ({
       inspect,
       paymentInfo,
+      saveResponse,
       asset,
       format: formatArg,
       tool,
@@ -329,10 +423,20 @@ export function createCallCommand(deps: CallDeps) {
         return;
       }
 
+      if (saveResponse) {
+        try {
+          assertSaveResponseSupported(result.tool, clientArgs);
+        } catch (err) {
+          write402Error(err instanceof Error ? err.message : String(err));
+          return;
+        }
+      }
+
       await handle402Retry({
         deps: {
           buildPaymentRetryHeader: deps.buildPaymentRetryHeader,
           runWrappedClient: deps.runWrappedClient,
+          appendHistoryRecord: deps.appendHistoryRecord ?? appendHistoryRecord,
           checkPreflightBalance:
             deps.checkPreflightBalance ?? checkPreflightBalance,
           preflightBalanceDeps:
@@ -342,6 +446,7 @@ export function createCallCommand(deps: CallDeps) {
         tool: result.tool,
         clientArgs,
         printPaymentInfo: paymentInfo,
+        saveResponse,
         firstAttempt: result,
       });
     },
@@ -352,6 +457,7 @@ export const call = createCallCommand({
   loadRequiredConfig,
   buildPaymentRetryHeader,
   runWrappedClient,
+  appendHistoryRecord,
   checkPreflightBalance,
   preflightBalanceDeps: defaultPreflightBalanceDeps,
 });

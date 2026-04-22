@@ -412,6 +412,7 @@ await t.test("payment signer", async (t) => {
         paymentInfo: {
           amount: "1000",
           asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          assetSymbol: "USDC",
           network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
         },
       });
@@ -534,6 +535,7 @@ await t.test("payment signer", async (t) => {
         paymentInfo: {
           amount: "1000",
           asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          assetSymbol: "USDC",
           network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
           decimals: 6,
         },

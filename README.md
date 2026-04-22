@@ -62,6 +62,7 @@ corbits call curl https://api.example.x402.org/data \
   -H "Content-Type: application/json" \
   -d '{"key":"value"}'
 corbits call --payment-info curl https://api.example.x402.org/resource
+corbits call --save-response curl https://api.example.x402.org/resource
 corbits call wget --method=POST https://api.example.x402.org/resource
 ```
 
@@ -93,6 +94,32 @@ Payment:
   network: solana-mainnet-beta
   tx_signature: 5k7...
 ```
+
+Successful paid retries are also recorded in local history at
+`$XDG_DATA_HOME/corbits/history.jsonl` or `~/.local/share/corbits/history.jsonl`.
+Use `--save-response` to store the successful paid response body alongside the
+history entry. When this flag is set, Corbits buffers the paid retry before
+printing it so the response body can be persisted. This flag is not supported
+together with `curl -o/--output` or `wget -O/--output-document`, because
+Corbits would otherwise need to buffer the paid response and slow delivery.
+
+### history
+
+Inspect locally saved paid-call history.
+
+```
+corbits history
+corbits history --wallet 7xKX
+corbits history --network solana-devnet --host exa.api.corbits.dev
+corbits history --since 1713782400 --until 2026-04-21T12:00:00Z
+corbits history --min-amount 1000 --max-amount 5000000
+corbits history show 3
+corbits history --format json
+```
+
+`history` shows the 20 most recent entries by default. Table output includes the
+stable `#` line index used by `history show <index>`. JSON and YAML outputs
+include that same `index` field for each listed entry.
 
 ### config
 

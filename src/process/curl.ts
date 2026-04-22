@@ -18,6 +18,7 @@ import {
 export type CurlOutputTarget = {
   bodyPath: string | null;
   headerPath: string | null;
+  remoteName: boolean;
 };
 
 type SanitizedCurlArgs = {
@@ -42,6 +43,7 @@ export function hasCurlNextFlag(args: string[]): boolean {
 export function parseCurlOutputTarget(args: string[]): CurlOutputTarget {
   let bodyPath: string | null = null;
   let headerPath: string | null = null;
+  let remoteName = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -63,6 +65,15 @@ export function parseCurlOutputTarget(args: string[]): CurlOutputTarget {
       continue;
     }
 
+    if (
+      arg === "-O" ||
+      arg === "--remote-name" ||
+      arg === "--remote-name-all"
+    ) {
+      remoteName = true;
+      continue;
+    }
+
     if (arg === "-D" || arg === "--dump-header") {
       headerPath = args[index + 1] ?? null;
       index += 1;
@@ -77,7 +88,7 @@ export function parseCurlOutputTarget(args: string[]): CurlOutputTarget {
     }
   }
 
-  return { bodyPath, headerPath };
+  return { bodyPath, headerPath, remoteName };
 }
 
 function sanitizeCurlArgs(

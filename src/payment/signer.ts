@@ -51,6 +51,7 @@ export type PaymentHandlerInfo = {
 export type PaymentMetadata = {
   amount: string;
   asset: string;
+  assetSymbol?: string;
   network: string;
   decimals?: number;
   txSignature?: string;
@@ -803,6 +804,9 @@ export function createBuildPaymentRetryHeader(
       paymentInfo: {
         amount: execer.requirements.amount,
         asset: execer.requirements.asset,
+        ...(selection.selected.symbol == null
+          ? {}
+          : { assetSymbol: selection.selected.symbol }),
         network: execer.requirements.network,
         ...(decimals == null ? {} : { decimals }),
       },

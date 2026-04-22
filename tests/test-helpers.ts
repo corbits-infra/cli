@@ -179,6 +179,30 @@ export function withTempConfigHome(test: {
   return dir;
 }
 
+export function withTempDataHome(test: {
+  teardown(fn: () => Promise<void>): void;
+}): string {
+  const priorDataHome = process.env.XDG_DATA_HOME;
+  const dir = path.join(
+    os.tmpdir(),
+    `corbits-data-${process.pid}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2)}`,
+  );
+
+  process.env.XDG_DATA_HOME = dir;
+  test.teardown(async () => {
+    if (priorDataHome === undefined) {
+      delete process.env.XDG_DATA_HOME;
+    } else {
+      process.env.XDG_DATA_HOME = priorDataHome;
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return dir;
+}
+
 export async function writeConfig(
   configHome: string,
   body: string,

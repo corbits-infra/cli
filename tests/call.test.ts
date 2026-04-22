@@ -413,6 +413,7 @@ await t.test("call wrapper helpers", async (t) => {
           outputTarget: {
             bodyPath: "/tmp/output.json",
             headerPath: "/tmp/headers.txt",
+            remoteName: false,
           },
         },
       );
@@ -1266,6 +1267,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: "table",
           tool: "curl",
@@ -1331,6 +1333,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: "json",
           tool: "curl",
@@ -1407,6 +1410,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: "json",
           tool: "curl",
@@ -1480,6 +1484,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1539,6 +1544,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1597,6 +1603,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: true,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: "table",
           tool: "curl",
@@ -1632,6 +1639,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: true,
         paymentInfo: false,
+        saveResponse: false,
         asset: "USDT",
         format: undefined,
         tool: "curl",
@@ -1701,6 +1709,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: false,
         paymentInfo: false,
+        saveResponse: false,
         asset: "USDT",
         format: undefined,
         tool: "curl",
@@ -1709,6 +1718,180 @@ await t.test("call command", async (t) => {
 
       t.equal(preflightAsset, "USDT");
       t.equal(retryAsset, "USDT");
+    },
+  );
+
+  await t.test(
+    "rejects --save-response with curl body output files on paid calls",
+    async (t) => {
+      const priorExitCode = process.exitCode;
+      process.exitCode = undefined;
+      t.teardown(() => {
+        process.exitCode = priorExitCode;
+      });
+
+      let buildPaymentRetryHeaderCalls = 0;
+      let checkPreflightCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          throw new Error("should not build payment retry header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              {
+                status: 402,
+              },
+            ),
+          }),
+        checkPreflightBalance: async () => {
+          checkPreflightCalls += 1;
+        },
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: true,
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["-o", "/tmp/paid-response.json", "https://example.com"],
+        });
+      });
+
+      t.match(
+        stderr,
+        /--save-response cannot be used with -o\/--output; remove -o\/--output or omit --save-response/,
+      );
+      t.equal(buildPaymentRetryHeaderCalls, 0);
+      t.equal(checkPreflightCalls, 0);
+      t.equal(process.exitCode, 1);
+    },
+  );
+
+  await t.test(
+    "rejects --save-response with curl remote-name outputs on paid calls",
+    async (t) => {
+      const priorExitCode = process.exitCode;
+      process.exitCode = undefined;
+      t.teardown(() => {
+        process.exitCode = priorExitCode;
+      });
+
+      let buildPaymentRetryHeaderCalls = 0;
+      let checkPreflightCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          throw new Error("should not build payment retry header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              {
+                status: 402,
+              },
+            ),
+          }),
+        checkPreflightBalance: async () => {
+          checkPreflightCalls += 1;
+        },
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: true,
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["-O", "https://example.com"],
+        });
+      });
+
+      t.match(
+        stderr,
+        /--save-response cannot be used with -O\/--remote-name; remove -O\/--remote-name or omit --save-response/,
+      );
+      t.equal(buildPaymentRetryHeaderCalls, 0);
+      t.equal(checkPreflightCalls, 0);
+      t.equal(process.exitCode, 1);
+    },
+  );
+
+  await t.test(
+    "rejects --save-response with wget body output files on paid calls",
+    async (t) => {
+      const priorExitCode = process.exitCode;
+      process.exitCode = undefined;
+      t.teardown(() => {
+        process.exitCode = priorExitCode;
+      });
+
+      let buildPaymentRetryHeaderCalls = 0;
+      let checkPreflightCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          buildPaymentRetryHeaderCalls += 1;
+          throw new Error("should not build payment retry header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "wget",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              {
+                status: 402,
+              },
+            ),
+          }),
+        checkPreflightBalance: async () => {
+          checkPreflightCalls += 1;
+        },
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: true,
+          asset: undefined,
+          format: undefined,
+          tool: "wget",
+          args: [
+            "--output-document=/tmp/paid-response.json",
+            "https://example.com",
+          ],
+        });
+      });
+
+      t.match(
+        stderr,
+        /--save-response cannot be used with -O\/--output-document; remove -O\/--output-document or omit --save-response/,
+      );
+      t.equal(buildPaymentRetryHeaderCalls, 0);
+      t.equal(checkPreflightCalls, 0);
+      t.equal(process.exitCode, 1);
     },
   );
 
@@ -1740,6 +1923,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1750,6 +1934,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -1818,6 +2003,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: false,
         paymentInfo: false,
+        saveResponse: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -1881,6 +2067,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: false,
         paymentInfo: false,
+        saveResponse: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -1949,6 +2136,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: true,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2009,6 +2197,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: true,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2066,6 +2255,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: true,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2122,6 +2312,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: true,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2183,6 +2374,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: true,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2241,6 +2433,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2275,6 +2468,7 @@ await t.test("call command", async (t) => {
         await call.handler({
           inspect: false,
           paymentInfo: false,
+          saveResponse: false,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -2316,6 +2510,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: false,
         paymentInfo: false,
+        saveResponse: false,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -2364,6 +2559,7 @@ await t.test("call command", async (t) => {
       await call.handler({
         inspect: false,
         paymentInfo: true,
+        saveResponse: false,
         asset: undefined,
         format: undefined,
         tool: "curl",

@@ -6,6 +6,7 @@ import { balance } from "./commands/balance.js";
 import { call } from "./commands/call.js";
 import { config } from "./commands/config.js";
 import { discover } from "./commands/discover.js";
+import { history } from "./commands/history.js";
 import { inspect } from "./commands/inspect.js";
 import { ApiError, ValidationError } from "./api/client.js";
 import { ConfigError } from "./config/index.js";
@@ -17,7 +18,7 @@ const app = subcommands({
   name: "corbits",
   version: pkg.version,
   description: "Browse, filter, and test x402-gated services",
-  cmds: { discover, inspect, config, call, balance },
+  cmds: { discover, inspect, config, call, balance, history },
 });
 
 run(app, process.argv.slice(2)).catch((err: unknown) => {
