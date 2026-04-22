@@ -35,7 +35,7 @@ export type HistoryRecord = typeof HistoryRecordSchema.infer;
 export type HistoryEntry = {
   index: number;
   record: HistoryRecord;
-  response?: string;
+  response?: Uint8Array;
 };
 
 export type HistoryWriteInput = {
@@ -56,7 +56,7 @@ export type HistoryWriteInput = {
 
 export type HistoryAppendArgs = {
   historyPath?: string;
-  responseBody?: string;
+  responseBody?: Uint8Array | string;
 };
 
 export type HistoryListFilters = {
@@ -248,13 +248,13 @@ function resolveStoredHistoryResponsePath(
 
 async function writeHistoryResponse(
   recordId: string,
-  responseBody: string,
+  responseBody: Uint8Array | string,
   historyPath?: string,
 ): Promise<string> {
   const responsePath = getHistoryResponseRelativePath(recordId);
   const targetPath = resolveHistoryResponsePath(responsePath, historyPath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.writeFile(targetPath, responseBody, "utf8");
+  await fs.writeFile(targetPath, responseBody);
   return responsePath;
 }
 
@@ -282,7 +282,7 @@ async function readHistoryResponse(
   record: HistoryRecord,
   index: number,
   historyPath?: string,
-): Promise<string | null> {
+): Promise<Uint8Array | null> {
   if (record.response_path == null) {
     return null;
   }
@@ -294,7 +294,7 @@ async function readHistoryResponse(
   );
 
   try {
-    return await fs.readFile(targetPath, "utf8");
+    return await fs.readFile(targetPath);
   } catch (cause) {
     if (isErrnoCode(cause, "ENOENT")) {
       throw new Error(`Saved response for history entry #${index} is missing`, {

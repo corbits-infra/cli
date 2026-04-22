@@ -453,7 +453,7 @@ async function handle402Retry(args: {
 
     const responseBody =
       args.saveResponse && retry.kind === "completed"
-        ? Buffer.from(retry.stdout).toString("utf8")
+        ? retry.stdout
         : undefined;
 
     if (retry.exitCode !== 0) {

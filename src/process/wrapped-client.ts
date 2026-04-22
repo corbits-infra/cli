@@ -26,6 +26,7 @@ import {
   hasWgetContentOnErrorFlag,
   hasWgetServerResponseFlag,
   parseWgetHeaders,
+  stripWgetServerResponse,
 } from "./wget.js";
 
 const execFileAsync = promisify(execFile);
@@ -102,6 +103,7 @@ export const testExports = {
   parseCurlHeaders,
   parseVerificationFailure,
   parseWgetHeaders,
+  stripWgetServerResponse,
 };
 
 export type * from "./types.js";

@@ -74,6 +74,31 @@ function combineWrappedBodies(
   ]);
 }
 
+function appendQuerySegments(url: string, segments: string[]): string {
+  if (segments.length === 0) {
+    return url;
+  }
+
+  const hashIndex = url.indexOf("#");
+  const baseUrl = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
+  const joiner = baseUrl.includes("?")
+    ? baseUrl.endsWith("?") || baseUrl.endsWith("&")
+      ? ""
+      : "&"
+    : "?";
+
+  return `${baseUrl}${joiner}${segments.join("&")}${hash}`;
+}
+
+function encodeFormUrlEncodedValue(value: string): string {
+  return encodeURIComponent(value).replace(/%20/g, "+");
+}
+
+function encodeWrappedBodyForQuery(body: WrappedBody): string {
+  return typeof body === "string" ? body : Buffer.from(body).toString("utf8");
+}
+
 export function parseWrappedRequestHeaders(
   tool: WrappedClient,
   args: string[],
@@ -137,6 +162,40 @@ async function resolveCurlBody(
   }
 
   return readBodyFile(deps, value.slice(1));
+}
+
+async function resolveCurlUrlEncodedBody(
+  deps: Pick<WrappedClientDeps, "readBinaryFile">,
+  value: string,
+): Promise<string> {
+  if (value.startsWith("@") && value !== "@-") {
+    return encodeURIComponent(
+      Buffer.from(await readBodyFile(deps, value.slice(1))).toString("utf8"),
+    );
+  }
+
+  const equalsIndex = value.indexOf("=");
+  const atIndex = value.indexOf("@");
+
+  if (value.startsWith("=")) {
+    return encodeFormUrlEncodedValue(value.slice(1));
+  }
+
+  if (atIndex > 0 && (equalsIndex === -1 || atIndex < equalsIndex)) {
+    const name = value.slice(0, atIndex);
+    const filePath = value.slice(atIndex + 1);
+    return `${name}=${encodeFormUrlEncodedValue(
+      Buffer.from(await readBodyFile(deps, filePath)).toString("utf8"),
+    )}`;
+  }
+
+  if (equalsIndex >= 0) {
+    return `${value.slice(0, equalsIndex + 1)}${encodeFormUrlEncodedValue(
+      value.slice(equalsIndex + 1),
+    )}`;
+  }
+
+  return encodeFormUrlEncodedValue(value);
 }
 
 async function resolveWgetBody(
@@ -217,11 +276,13 @@ export async function parseWrappedRequestInfo(
   tool: WrappedClient,
   args: string[],
 ): Promise<WrappedRequestInfo> {
-  const url = extractFirstUrl(args) ?? "";
+  let url = extractFirstUrl(args) ?? "";
 
   if (tool === "curl") {
     let method: string | undefined;
     let body: WrappedBody | undefined;
+    let useQueryString = false;
+    let hasExplicitMethod = false;
 
     for (let index = 0; index < args.length; index += 1) {
       const arg = args[index];
@@ -233,12 +294,25 @@ export async function parseWrappedRequestInfo(
         const candidate = args[index + 1];
         if (candidate != null) {
           method = candidate.toUpperCase();
+          hasExplicitMethod = true;
         }
         index += 1;
         continue;
       }
       if (arg.startsWith("--request=")) {
         method = arg.slice("--request=".length).toUpperCase();
+        hasExplicitMethod = true;
+        continue;
+      }
+
+      if (arg === "-G" || arg === "--get") {
+        useQueryString = true;
+        continue;
+      }
+
+      if (arg === "-I" || arg === "--head") {
+        method = "HEAD";
+        hasExplicitMethod = true;
         continue;
       }
 
@@ -254,6 +328,19 @@ export async function parseWrappedRequestInfo(
           body = combineWrappedBodies(
             body,
             await resolveCurlBody(deps, candidate),
+          );
+          method ??= "POST";
+        }
+        index += 1;
+        continue;
+      }
+
+      if (arg === "--data-urlencode") {
+        const candidate = args[index + 1];
+        if (candidate != null) {
+          body = combineWrappedBodies(
+            body,
+            await resolveCurlUrlEncodedBody(deps, candidate),
           );
           method ??= "POST";
         }
@@ -280,6 +367,18 @@ export async function parseWrappedRequestInfo(
         continue;
       }
 
+      if (arg.startsWith("--data-urlencode=")) {
+        body = combineWrappedBodies(
+          body,
+          await resolveCurlUrlEncodedBody(
+            deps,
+            arg.slice("--data-urlencode=".length),
+          ),
+        );
+        method ??= "POST";
+        continue;
+      }
+
       if (arg.startsWith("-d") && arg.length > 2) {
         body = combineWrappedBodies(
           body,
@@ -289,10 +388,17 @@ export async function parseWrappedRequestInfo(
       }
     }
 
+    const normalizedMethod =
+      hasExplicitMethod || !useQueryString ? (method ?? "GET") : "GET";
+    if (body != null && useQueryString) {
+      url = appendQuerySegments(url, [encodeWrappedBodyForQuery(body)]);
+      body = undefined;
+    }
+
     return {
       url,
       requestInit: {
-        method: method ?? "GET",
+        method: normalizedMethod,
         ...(body == null ? {} : { body }),
       },
     };

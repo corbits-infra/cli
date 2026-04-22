@@ -34,6 +34,8 @@ type WgetExecutionPlan = {
   captureDirPrefix: string;
   captureBodyToStdout: boolean;
   mirrorStdout: boolean;
+  mirrorStderr: boolean;
+  stripInjectedServerResponse: boolean;
 };
 
 export function hasMultipleWrappedUrls(args: string[]): boolean {
@@ -172,6 +174,39 @@ export function parseWgetHeaders(stderr: string): {
   return { status, headers };
 }
 
+export function stripWgetServerResponse(stderr: string): string {
+  const lines = stderr.split(/\r?\n/);
+  const filteredLines: string[] = [];
+  let skippingHeaders = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const isIndented = line !== trimmed;
+
+    if (isIndented && trimmed.startsWith("HTTP/")) {
+      skippingHeaders = true;
+      continue;
+    }
+
+    if (skippingHeaders) {
+      if (trimmed.length === 0) {
+        skippingHeaders = false;
+        continue;
+      }
+
+      if (isIndented) {
+        continue;
+      }
+
+      skippingHeaders = false;
+    }
+
+    filteredLines.push(line);
+  }
+
+  return filteredLines.join("\n").replace(/^\n+/, "");
+}
+
 function buildWgetExecutionPlan(args: {
   rawArgs: string[];
   extraHeader: RetryHeader | undefined;
@@ -181,8 +216,9 @@ function buildWgetExecutionPlan(args: {
     args.rawArgs,
   );
   const commandArgs = [...sanitizedArgs];
+  const userRequestedServerResponse = hasWgetServerResponseFlag(commandArgs);
 
-  if (!hasWgetServerResponseFlag(commandArgs)) {
+  if (!userRequestedServerResponse) {
     commandArgs.unshift("--server-response");
   }
   if (!hasWgetContentOnErrorFlag(commandArgs)) {
@@ -211,6 +247,8 @@ function buildWgetExecutionPlan(args: {
     captureDirPrefix,
     captureBodyToStdout: commandOutputTarget === "-",
     mirrorStdout: args.streamOutput && isStdoutTarget(outputTarget.bodyPath),
+    mirrorStderr: args.streamOutput && userRequestedServerResponse,
+    stripInjectedServerResponse: !userRequestedServerResponse,
   };
 }
 
@@ -253,7 +291,7 @@ export async function runWget(
       stdoutPath,
       stderrPath,
       mirrorStdout: plan.mirrorStdout,
-      mirrorStderr: streamOutput,
+      mirrorStderr: plan.mirrorStderr,
     });
     const body = await deps
       .readBinaryFile(bodyPath)
@@ -263,6 +301,10 @@ export async function runWget(
       .catch(() => new Uint8Array());
     const stderr = decodeUtf8(stderrBytes);
     const { status, headers } = parseWgetHeaders(stderr);
+    const visibleStderr = plan.stripInjectedServerResponse
+      ? stripWgetServerResponse(stderr)
+      : stderr;
+    const visibleStderrBytes = Buffer.from(visibleStderr, "utf8");
 
     if (status !== 402) {
       if (hasFileOutputTarget(plan.outputTarget.bodyPath)) {
@@ -270,6 +312,9 @@ export async function runWget(
       }
 
       if (streamOutput) {
+        if (!plan.mirrorStderr && visibleStderr.length > 0) {
+          process.stderr.write(visibleStderr);
+        }
         if (!plan.mirrorStdout && body.length > 0) {
           process.stdout.write(body);
         }
@@ -287,7 +332,7 @@ export async function runWget(
         stdout: isStdoutTarget(plan.outputTarget.bodyPath)
           ? body
           : new Uint8Array(),
-        stderr: stderrBytes,
+        stderr: visibleStderrBytes,
         headers,
       });
     }

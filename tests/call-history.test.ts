@@ -246,7 +246,12 @@ await t.test("call history integration", async (t) => {
       });
 
       const entry = await readHistoryEntry(1);
-      t.equal(entry?.response, '{"items":[1,2,3]}');
+      t.equal(
+        entry?.response == null
+          ? undefined
+          : Buffer.from(entry.response).toString("utf8"),
+        '{"items":[1,2,3]}',
+      );
       t.equal(entry?.record.asset_symbol, "USDC");
       t.ok(entry?.record.response_path);
       if (entry?.record.response_path != null) {
@@ -260,6 +265,67 @@ await t.test("call history integration", async (t) => {
         t.equal(savedResponse, '{"items":[1,2,3]}');
       }
       t.same(streamOutputModes, [false]);
+    },
+  );
+
+  await t.test(
+    "stores raw response bytes when --save-response is enabled",
+    async (t) => {
+      withTempDataHome(t);
+
+      const binaryResponse = Buffer.from([0x00, 0xff, 0x41, 0x0a]);
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: { name: "X-PAYMENT", value: "paid" },
+          paymentInfo: {
+            amount: "2000",
+            asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            assetSymbol: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                url: "https://example.com/binary",
+                requestInit: { method: "GET" },
+              })
+            : {
+                kind: "completed",
+                exitCode: 0,
+                status: 200,
+                stdout: binaryResponse,
+                stderr: new Uint8Array(),
+                headers: new Headers(),
+              },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: true,
+        yes: false,
+        asset: undefined,
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com/binary"],
+      });
+
+      const entry = await readHistoryEntry(1);
+      t.same(entry?.response, binaryResponse);
+      if (entry?.record.response_path != null) {
+        const savedResponse = await fs.readFile(
+          path.resolve(
+            path.dirname(getHistoryPath()),
+            entry.record.response_path,
+          ),
+        );
+        t.same(savedResponse, binaryResponse);
+      }
     },
   );
 

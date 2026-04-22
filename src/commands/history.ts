@@ -1,4 +1,5 @@
 import { command, option, optional, positional, string } from "cmd-ts";
+import { TextDecoder } from "node:util";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 import {
   listHistoryEntries,
@@ -87,6 +88,26 @@ function formatResponseStatus(status: number | null): string {
   return status == null ? "unknown" : `HTTP ${status}`;
 }
 
+function decodeHistoryResponse(response: Uint8Array): {
+  text?: string;
+  base64?: string;
+} {
+  try {
+    return {
+      text: new TextDecoder("utf8", { fatal: true }).decode(response),
+    };
+  } catch {
+    return { base64: Buffer.from(response).toString("base64") };
+  }
+}
+
+function writeResponseText(response: string): void {
+  process.stdout.write(response);
+  if (!response.endsWith("\n")) {
+    process.stdout.write("\n");
+  }
+}
+
 function formatHistoryAmount(entry: HistoryEntry): string {
   const assetDisplay = entry.record.asset_symbol ?? entry.record.asset;
   const amount = formatDisplayTokenAmount({
@@ -160,10 +181,18 @@ function printHistoryList(format: OutputFormat, entries: HistoryEntry[]): void {
 }
 
 function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
+  const decodedResponse =
+    entry.response == null ? undefined : decodeHistoryResponse(entry.response);
   const detail =
-    entry.response == null
+    decodedResponse == null
       ? entry.record
-      : { ...entry.record, response: entry.response };
+      : decodedResponse.text != null
+        ? { ...entry.record, response: decodedResponse.text }
+        : {
+            ...entry.record,
+            response_base64: decodedResponse.base64,
+            response_encoding: "base64",
+          };
 
   if (format === "json") {
     printJson(detail);
@@ -206,11 +235,14 @@ function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
   }
 
   writeLine("");
-  writeLine("Response:");
-  process.stdout.write(entry.response);
-  if (!entry.response.endsWith("\n")) {
-    process.stdout.write("\n");
+  if (decodedResponse?.text != null) {
+    writeLine("Response:");
+    writeResponseText(decodedResponse.text);
+    return;
   }
+
+  writeLine("Response (base64):");
+  writeLine(decodedResponse?.base64 ?? "");
 }
 
 export function createHistoryCommand(deps: HistoryCommandDeps) {

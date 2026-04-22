@@ -57,12 +57,12 @@ async function writeHistoryLines(
 
 async function writeHistoryResponse(
   responsePath: string,
-  responseBody: string,
+  responseBody: string | Uint8Array,
 ): Promise<void> {
   const historyPath = getHistoryPath();
   const targetPath = path.resolve(path.dirname(historyPath), responsePath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.writeFile(targetPath, responseBody, "utf8");
+  await fs.writeFile(targetPath, responseBody);
 }
 
 await t.test("history command", async (t) => {
@@ -390,6 +390,46 @@ await t.test("history command", async (t) => {
       t.match(output, /tx_signature/);
       t.match(output, /Response:/);
       t.match(output, /\{"ok":true\}/);
+    },
+  );
+
+  await t.test(
+    "shows binary saved responses as base64 in table output",
+    async (t) => {
+      withTempDataHome(t);
+
+      const record = createRecord({
+        response_path: path.join("history-responses", "saved-response.bin"),
+      });
+      if (record.response_path == null) {
+        throw new Error("response_path should be set for saved-response tests");
+      }
+      await writeHistoryResponse(
+        record.response_path,
+        Buffer.from([0x00, 0xff, 0x41, 0x0a]),
+      );
+
+      await writeHistoryLines([record]);
+
+      const output = await captureStdout(() =>
+        historyCommand.handler({
+          action: "show",
+          index: "1",
+          format: "table",
+          wallet: undefined,
+          network: undefined,
+          host: undefined,
+          resource: undefined,
+          minAmount: undefined,
+          maxAmount: undefined,
+          since: undefined,
+          until: undefined,
+          limit: undefined,
+        }),
+      );
+
+      t.match(output, /Response \(base64\):/);
+      t.match(output, /AP9BCg==/);
     },
   );
 

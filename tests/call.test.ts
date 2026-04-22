@@ -304,6 +304,56 @@ await t.test("call wrapper helpers", async (t) => {
       t.equal(wgetRequest.url, "https://example.com/items");
       t.equal(wgetRequest.requestInit.method, "POST");
       t.equal(wgetRequest.requestInit.body, "hello");
+
+      const curlGetRequest = await testExports.parseWrappedRequestInfo(
+        {
+          readBinaryFile: async () => Buffer.from("unused"),
+        },
+        "curl",
+        [
+          "-G",
+          "--data-urlencode",
+          "query=hello world",
+          "https://example.com/items?existing=yes",
+        ],
+      );
+      t.equal(
+        curlGetRequest.url,
+        "https://example.com/items?existing=yes&query=hello+world",
+      );
+      t.equal(curlGetRequest.requestInit.method, "GET");
+      t.notOk("body" in curlGetRequest.requestInit);
+
+      const curlUnnamedUrlEncodedRequest =
+        await testExports.parseWrappedRequestInfo(
+          {
+            readBinaryFile: async () => Buffer.from("unused"),
+          },
+          "curl",
+          [
+            "-G",
+            "--data-urlencode",
+            "=hello world",
+            "https://example.com/items",
+          ],
+        );
+      t.equal(
+        curlUnnamedUrlEncodedRequest.url,
+        "https://example.com/items?hello+world",
+      );
+      t.equal(curlUnnamedUrlEncodedRequest.requestInit.method, "GET");
+      t.notOk("body" in curlUnnamedUrlEncodedRequest.requestInit);
+
+      const explicitGetRequest = await testExports.parseWrappedRequestInfo(
+        {
+          readBinaryFile: async () => Buffer.from("unused"),
+        },
+        "curl",
+        ["-X", "GET", "-d", "page=1", "https://example.com/items"],
+      );
+      t.equal(explicitGetRequest.url, "https://example.com/items");
+      t.equal(explicitGetRequest.requestInit.method, "GET");
+      t.equal(explicitGetRequest.requestInit.body, "page=1");
     },
   );
 
@@ -569,14 +619,14 @@ await t.test("wrapped client runner", async (t) => {
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
-          stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
+          stderr: Buffer.from("  HTTP/1.1 200 OK\n  Content-Length: 14\n"),
         }),
         readBinaryFile: async (filePath) => {
           if (filePath.endsWith("stdout.txt")) {
             return Buffer.from("downloaded body");
           }
           if (filePath.endsWith("stderr.txt")) {
-            return Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n");
+            return Buffer.from("  HTTP/1.1 200 OK\n  Content-Length: 14\n");
           }
           return new Uint8Array();
         },
@@ -593,7 +643,7 @@ await t.test("wrapped client runner", async (t) => {
       exitCode: 0,
       status: 200,
       stdout: Buffer.from("downloaded body"),
-      stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
+      stderr: Buffer.from(""),
       headers: new Headers({ "content-length": "14" }),
     });
   });
@@ -606,14 +656,14 @@ await t.test("wrapped client runner", async (t) => {
       const runWrappedClient = createRunWrappedClient(
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
-            stderr: Buffer.from("HTTP/1.1 200 OK\n"),
+            stderr: Buffer.from("  HTTP/1.1 200 OK\n"),
           }),
           readBinaryFile: async (filePath) => {
             if (filePath.endsWith("stdout.txt")) {
               return largeBody;
             }
             if (filePath.endsWith("stderr.txt")) {
-              return Buffer.from("HTTP/1.1 200 OK\n");
+              return Buffer.from("  HTTP/1.1 200 OK\n");
             }
             return new Uint8Array();
           },
@@ -639,7 +689,7 @@ await t.test("wrapped client runner", async (t) => {
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
           stdout: Buffer.from("downloaded body"),
-          stderr: Buffer.from("HTTP/1.1 200 OK\n"),
+          stderr: Buffer.from("  HTTP/1.1 200 OK\n"),
         }),
         writeFile: async (filePath, data) => {
           writes.push({
@@ -672,7 +722,7 @@ await t.test("wrapped client runner", async (t) => {
         createWrapperDeps(tempDir, {
           spawn: createSpawnStub({
             stdout: Buffer.from("downloaded body"),
-            stderr: Buffer.from("HTTP/1.1 200 OK\n"),
+            stderr: Buffer.from("  HTTP/1.1 200 OK\n"),
           }),
           writeFile: async (filePath, data) => {
             writes.push({
@@ -704,14 +754,14 @@ await t.test("wrapped client runner", async (t) => {
     const runWrappedClient = createRunWrappedClient(
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
-          stderr: Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n"),
+          stderr: Buffer.from("  HTTP/1.1 200 OK\n  Content-Length: 14\n"),
         }),
         readBinaryFile: async (filePath) => {
           if (filePath.endsWith("body.bin")) {
             return Buffer.from("downloaded body");
           }
           if (filePath.endsWith("stderr.txt")) {
-            return Buffer.from("HTTP/1.1 200 OK\nContent-Length: 14\n");
+            return Buffer.from("  HTTP/1.1 200 OK\n  Content-Length: 14\n");
           }
           return new Uint8Array();
         },
@@ -752,7 +802,7 @@ await t.test("wrapped client runner", async (t) => {
       createWrapperDeps(tempDir, {
         spawn: createSpawnStub({
           stdout: Buffer.from("downloaded body"),
-          stderr: Buffer.from("HTTP/1.1 200 OK\nX-Test: paid\n"),
+          stderr: Buffer.from("  HTTP/1.1 200 OK\n  X-Test: paid\n"),
           onSpawn: (file, spawnedArgs) => {
             calls.push({ file, args: spawnedArgs });
           },
@@ -820,6 +870,34 @@ await t.test("wrapped client runner", async (t) => {
 
       t.equal(Buffer.from(stdout).toString("utf8"), "paid body");
       t.equal(stderr, "");
+    },
+  );
+
+  await t.test(
+    "hides internally injected wget response headers from successful output",
+    async (t) => {
+      const tempDir = t.testdir();
+      const runWrappedClient = createRunWrappedClient(
+        createWrapperDeps(tempDir, {
+          spawn: createSpawnStub({
+            stdout: Buffer.from("paid body"),
+            stderr: Buffer.from(
+              "  HTTP/1.1 200 OK\n  Content-Length: 9\nsaved 9 [text/plain]\n",
+            ),
+          }),
+        }),
+      );
+
+      const stderr = await captureStderr(() =>
+        runWrappedClient({
+          tool: "wget",
+          args: ["https://example.com"],
+          extraHeader: { name: "X-PAYMENT", value: "paid" },
+          streamOutput: true,
+        }).then(() => undefined),
+      );
+
+      t.equal(stderr, "saved 9 [text/plain]\n");
     },
   );
 
