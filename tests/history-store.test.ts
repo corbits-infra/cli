@@ -28,6 +28,22 @@ async function listDirectoryEntries(dir: string): Promise<string[]> {
 }
 
 await t.test("history store", async (t) => {
+  await t.test("stores history amounts in base units", async (t) => {
+    const record = createHistoryRecord({
+      tool: "curl",
+      url: "https://example.com/items",
+      responseStatus: 200,
+      amount: "3000",
+      asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      assetSymbol: "USDC",
+      network: "solana-mainnet-beta",
+      walletAddress: "Wallet-1",
+      walletKind: "keypair",
+    });
+
+    t.equal(record.amount, "3000");
+  });
+
   await t.test(
     "removes the saved response sidecar when metadata persistence fails",
     async (t) => {

@@ -128,10 +128,12 @@ await t.test("history command", async (t) => {
       const parsed = JSON.parse(output) as {
         index: number;
         resource_path: string;
+        amount: string;
       }[];
       t.equal(parsed.length, 20);
       t.equal(parsed[0]?.index, 21);
       t.equal(parsed[0]?.resource_path, "/items/21");
+      t.equal(parsed[0]?.amount, "0.001000");
       t.equal(parsed.at(-1)?.index, 2);
     },
   );
@@ -173,19 +175,23 @@ await t.test("history command", async (t) => {
           network: "devnet",
           host: "stable",
           resource: "exa",
-          minAmount: "2000000",
-          maxAmount: "3000000",
+          minAmount: "2",
+          maxAmount: "3",
           since: undefined,
           until: undefined,
           limit: undefined,
         }),
       );
 
-      const parsed = JSON.parse(filteredJson) as { index: number }[];
+      const parsed = JSON.parse(filteredJson) as {
+        index: number;
+        amount: string;
+      }[];
       t.same(
         parsed.map((entry) => entry.index),
         [2],
       );
+      t.equal(parsed[0]?.amount, "2.500000");
 
       const filteredTable = await captureStdout(() =>
         historyCommand.handler({

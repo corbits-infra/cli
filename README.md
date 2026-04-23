@@ -98,7 +98,7 @@ metadata to `stderr`:
 
 ```
 Payment:
-  amount: 1000
+  amount: 0.001000
   asset: USDC
   network: solana-mainnet-beta
   tx_signature: 5k7...
@@ -121,14 +121,18 @@ corbits history
 corbits history --wallet 7xKX
 corbits history --network solana-devnet --host exa.api.corbits.dev
 corbits history --since 1713782400 --until 2026-04-21T12:00:00Z
-corbits history --min-amount 1000 --max-amount 5000000
+corbits history --min-amount 0.001 --max-amount 5
 corbits history show 3
 corbits history --format json
 ```
 
 `history` shows the 20 most recent entries by default. Table output includes the
 stable `#` line index used by `history show <index>`. JSON and YAML outputs
-include that same `index` field for each listed entry.
+include that same `index` field for each listed entry. `--min-amount` and
+`--max-amount` filter on the displayed paid amount, so values like `0.003` and
+`5` are interpreted as UI amounts rather than raw base units. History records
+keep the paid amount in base units on disk, but all CLI output formats render
+that amount back to UI units for display.
 
 ### config
 

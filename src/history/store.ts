@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { type } from "arktype";
 import type { ResolvedConfig } from "../config/index.js";
+import { formatDisplayTokenAmount } from "../output/format.js";
 import type { WrappedClient } from "../process/wrapped-client.js";
 
 const HISTORY_RESPONSE_DIRECTORY = "history-responses";
@@ -64,8 +65,8 @@ export type HistoryListFilters = {
   network?: string;
   host?: string;
   resource?: string;
-  minAmount?: bigint;
-  maxAmount?: bigint;
+  minAmount?: string;
+  maxAmount?: string;
   since?: number;
   until?: number;
   limit?: number;
@@ -321,12 +322,196 @@ function includesIgnoreCase(value: string, needle: string): boolean {
   return value.toLowerCase().includes(needle.toLowerCase());
 }
 
-function parseBaseAmount(value: string): bigint | null {
+function parseDecimalAmount(value: string): string | null {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  const normalizedWhole = (wholePart ?? "0").replace(/^0+(?=\d)/, "");
+  const normalizedFractional = fractionalPart.replace(/0+$/, "");
+
+  return normalizedFractional.length === 0
+    ? normalizedWhole
+    : `${normalizedWhole}.${normalizedFractional}`;
+}
+
+function compareDecimalAmounts(left: string, right: string): number {
+  const [leftWhole, leftFractional = ""] = left.split(".");
+  const [rightWhole, rightFractional = ""] = right.split(".");
+  const normalizedLeftWhole = leftWhole ?? "0";
+  const normalizedRightWhole = rightWhole ?? "0";
+
+  if (normalizedLeftWhole.length !== normalizedRightWhole.length) {
+    return normalizedLeftWhole.length > normalizedRightWhole.length ? 1 : -1;
+  }
+
+  if (normalizedLeftWhole !== normalizedRightWhole) {
+    return normalizedLeftWhole > normalizedRightWhole ? 1 : -1;
+  }
+
+  const fractionLength = Math.max(
+    leftFractional.length,
+    rightFractional.length,
+  );
+  const paddedLeft = leftFractional.padEnd(fractionLength, "0");
+  const paddedRight = rightFractional.padEnd(fractionLength, "0");
+
+  if (paddedLeft === paddedRight) {
+    return 0;
+  }
+
+  return paddedLeft > paddedRight ? 1 : -1;
+}
+
+function parseBaseUnitAmount(value: string): string | null {
   const normalized = value.trim();
   if (!/^\d+$/.test(normalized)) {
     return null;
   }
-  return BigInt(normalized);
+
+  return normalized.replace(/^0+(?=\d)/, "");
+}
+
+function compareBaseUnitAmounts(left: string, right: string): number {
+  if (left.length !== right.length) {
+    return left.length > right.length ? 1 : -1;
+  }
+
+  if (left === right) {
+    return 0;
+  }
+
+  return left > right ? 1 : -1;
+}
+
+function incrementBaseUnitAmount(value: string): string {
+  const digits = value.split("");
+
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    if (digits[index] !== "9") {
+      digits[index] = String(Number(digits[index]) + 1);
+      return digits.join("");
+    }
+    digits[index] = "0";
+  }
+
+  return `1${digits.join("")}`;
+}
+
+function getHistoryAmountDecimals(record: HistoryRecord): number | null {
+  if (record.decimals != null) {
+    return record.decimals;
+  }
+
+  const assetDisplay = record.asset_symbol ?? record.asset;
+  return assetDisplay === "USDC" ? 6 : null;
+}
+
+function parseDisplayAmountToBaseUnits(
+  value: string,
+  decimals: number,
+  rounding: "ceil" | "floor",
+): string | null {
+  const normalized = parseDecimalAmount(value);
+  if (normalized == null) {
+    return null;
+  }
+
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  const paddedFractional = fractionalPart.padEnd(decimals, "0");
+  const truncatedFractional = paddedFractional.slice(0, decimals);
+  const baseAmount = parseBaseUnitAmount(`${wholePart}${truncatedFractional}`);
+
+  if (baseAmount == null) {
+    return null;
+  }
+
+  if (
+    rounding === "ceil" &&
+    /[1-9]/.exec(fractionalPart.slice(decimals)) != null
+  ) {
+    return incrementBaseUnitAmount(baseAmount);
+  }
+
+  return baseAmount;
+}
+
+function getComparableHistoryAmount(record: HistoryRecord): string | null {
+  const baseUnitAmount = parseBaseUnitAmount(record.amount);
+  if (baseUnitAmount != null) {
+    return parseDecimalAmount(
+      formatDisplayTokenAmount({
+        amount: baseUnitAmount,
+        asset: record.asset_symbol ?? record.asset,
+        ...(record.decimals == null ? {} : { decimals: record.decimals }),
+      }),
+    );
+  }
+
+  return parseDecimalAmount(record.amount);
+}
+
+function matchesAmountFilters(
+  record: HistoryRecord,
+  filters: Pick<HistoryListFilters, "minAmount" | "maxAmount">,
+): boolean {
+  const decimals = getHistoryAmountDecimals(record);
+  const baseUnitAmount = parseBaseUnitAmount(record.amount);
+
+  if (decimals != null && baseUnitAmount != null) {
+    if (filters.minAmount != null) {
+      const minAmount = parseDisplayAmountToBaseUnits(
+        filters.minAmount,
+        decimals,
+        "ceil",
+      );
+      if (
+        minAmount == null ||
+        compareBaseUnitAmounts(baseUnitAmount, minAmount) < 0
+      ) {
+        return false;
+      }
+    }
+
+    if (filters.maxAmount != null) {
+      const maxAmount = parseDisplayAmountToBaseUnits(
+        filters.maxAmount,
+        decimals,
+        "floor",
+      );
+      if (
+        maxAmount == null ||
+        compareBaseUnitAmounts(baseUnitAmount, maxAmount) > 0
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  const displayAmount = getComparableHistoryAmount(record);
+  if (displayAmount == null) {
+    return false;
+  }
+
+  if (
+    filters.minAmount != null &&
+    compareDecimalAmounts(displayAmount, filters.minAmount) < 0
+  ) {
+    return false;
+  }
+
+  if (
+    filters.maxAmount != null &&
+    compareDecimalAmounts(displayAmount, filters.maxAmount) > 0
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function matchesFilters(
@@ -362,24 +547,7 @@ function matchesFilters(
 
   if (
     (filters.minAmount != null || filters.maxAmount != null) &&
-    parseBaseAmount(record.amount) == null
-  ) {
-    return false;
-  }
-
-  const amount = parseBaseAmount(record.amount);
-  if (
-    filters.minAmount != null &&
-    amount != null &&
-    amount < filters.minAmount
-  ) {
-    return false;
-  }
-
-  if (
-    filters.maxAmount != null &&
-    amount != null &&
-    amount > filters.maxAmount
+    !matchesAmountFilters(record, filters)
   ) {
     return false;
   }

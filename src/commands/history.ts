@@ -5,6 +5,7 @@ import {
   listHistoryEntries,
   readHistoryEntry,
   type HistoryEntry,
+  type HistoryRecord,
 } from "../history/store.js";
 import {
   formatDisplayTokenAmount,
@@ -48,12 +49,20 @@ function parsePositiveInteger(name: string, value: string): number {
   return parsed;
 }
 
-function parseAmountFilter(name: string, value: string): bigint {
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`${name} must be a base-unit integer`);
+function parseAmountFilter(name: string, value: string): string {
+  const normalized = value.trim();
+
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+    throw new Error(`${name} must be a decimal amount`);
   }
 
-  return BigInt(value);
+  const [wholePart, fractionalPart = ""] = normalized.split(".");
+  const normalizedWhole = (wholePart ?? "0").replace(/^0+(?=\d)/, "");
+  const normalizedFractional = fractionalPart.replace(/0+$/, "");
+
+  return normalizedFractional.length === 0
+    ? normalizedWhole
+    : `${normalizedWhole}.${normalizedFractional}`;
 }
 
 function parseTimeFilter(name: string, value: string): number {
@@ -108,15 +117,25 @@ function writeResponseText(response: string): void {
   }
 }
 
+function formatHistoryDisplayAmount(record: HistoryRecord): string {
+  const assetDisplay = record.asset_symbol ?? record.asset;
+  return formatDisplayTokenAmount({
+    amount: record.amount,
+    asset: assetDisplay,
+    ...(record.decimals == null ? {} : { decimals: record.decimals }),
+  });
+}
+
+function toDisplayHistoryRecord(record: HistoryRecord): HistoryRecord {
+  return {
+    ...record,
+    amount: formatHistoryDisplayAmount(record),
+  };
+}
+
 function formatHistoryAmount(entry: HistoryEntry): string {
   const assetDisplay = entry.record.asset_symbol ?? entry.record.asset;
-  const amount = formatDisplayTokenAmount({
-    amount: entry.record.amount,
-    asset: assetDisplay,
-    ...(entry.record.decimals == null
-      ? {}
-      : { decimals: entry.record.decimals }),
-  });
+  const amount = formatHistoryDisplayAmount(entry.record);
   return `${amount} ${assetDisplay}`;
 }
 
@@ -137,14 +156,20 @@ function hasListFilters(args: HistoryCommandArgs): boolean {
 function printHistoryList(format: OutputFormat, entries: HistoryEntry[]): void {
   if (format === "json") {
     printJson(
-      entries.map((entry) => ({ index: entry.index, ...entry.record })),
+      entries.map((entry) => ({
+        index: entry.index,
+        ...toDisplayHistoryRecord(entry.record),
+      })),
     );
     return;
   }
 
   if (format === "yaml") {
     printYaml(
-      entries.map((entry) => ({ index: entry.index, ...entry.record })),
+      entries.map((entry) => ({
+        index: entry.index,
+        ...toDisplayHistoryRecord(entry.record),
+      })),
     );
     return;
   }
@@ -181,15 +206,16 @@ function printHistoryList(format: OutputFormat, entries: HistoryEntry[]): void {
 }
 
 function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
+  const displayRecord = toDisplayHistoryRecord(entry.record);
   const decodedResponse =
     entry.response == null ? undefined : decodeHistoryResponse(entry.response);
   const detail =
     decodedResponse == null
-      ? entry.record
+      ? displayRecord
       : decodedResponse.text != null
-        ? { ...entry.record, response: decodedResponse.text }
+        ? { ...displayRecord, response: decodedResponse.text }
         : {
-            ...entry.record,
+            ...displayRecord,
             response_base64: decodedResponse.base64,
             response_encoding: "base64",
           };
@@ -216,7 +242,7 @@ function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
       ["resource_path", entry.record.resource_path],
       ["response_status", formatResponseStatus(entry.record.response_status)],
       ["payment_status", entry.record.payment_status],
-      ["amount", formatHistoryAmount(entry)],
+      ["amount", formatHistoryAmount({ ...entry, record: displayRecord })],
       ["asset", entry.record.asset],
       ...(entry.record.asset_symbol == null
         ? []
@@ -276,12 +302,14 @@ export function createHistoryCommand(deps: HistoryCommandDeps) {
       minAmount: option({
         type: optional(string),
         long: "min-amount",
-        description: "Minimum paid amount in base integer units",
+        description:
+          "Only include entries with paid amount at or above this displayed amount",
       }),
       maxAmount: option({
         type: optional(string),
         long: "max-amount",
-        description: "Maximum paid amount in base integer units",
+        description:
+          "Only include entries with paid amount at or below this displayed amount",
       }),
       since: option({
         type: optional(string),
