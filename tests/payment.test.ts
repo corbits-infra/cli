@@ -118,6 +118,10 @@ function createEvmOwsConfig() {
   };
 }
 
+function decodeBase64Json(value: string): unknown {
+  return JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
+}
+
 await t.test("payment signer", async (t) => {
   await t.test(
     "builds payment option records from accepted requirements",
@@ -540,6 +544,126 @@ await t.test("payment signer", async (t) => {
           decimals: 6,
         },
       });
+    },
+  );
+
+  await t.test(
+    "adds required payment identifier extensions to v2 retry headers",
+    async (t) => {
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          handler: async (_context, accepts) => {
+            const firstAccept = accepts[0];
+            if (firstAccept == null) {
+              throw new Error("expected a supported payment requirement");
+            }
+
+            return [
+              {
+                requirements: firstAccept,
+                exec: async () => ({
+                  payload: {
+                    signature: "0xpaid-with-identifier",
+                  },
+                }),
+              },
+            ];
+          },
+        }),
+      });
+
+      const header = await buildPaymentRetryHeader({
+        config: {
+          ...createSolanaKeypairConfig(),
+          payment: {
+            ...createSolanaKeypairConfig().payment,
+            network: "mainnet-beta",
+            rpcUrl: "https://api.mainnet-beta.solana.com",
+          },
+        },
+        response: new Response("", {
+          status: 402,
+          statusText: "Payment Required",
+          headers: {
+            [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+              JSON.stringify({
+                x402Version: 2,
+                resource: {
+                  url: "https://example.com/x402/defi/price",
+                },
+                accepts: [
+                  {
+                    scheme: "exact",
+                    network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                    amount: "3000",
+                    payTo: "receiver",
+                    maxTimeoutSeconds: 60,
+                    asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    extra: {
+                      decimals: 6,
+                    },
+                  },
+                ],
+                extensions: {
+                  "payment-identifier": {
+                    info: {
+                      required: true,
+                    },
+                    schema: {
+                      type: "object",
+                    },
+                  },
+                  bazaar: {
+                    info: {
+                      input: {
+                        type: "http",
+                        method: "GET",
+                      },
+                    },
+                  },
+                },
+              }),
+              "utf8",
+            ).toString("base64"),
+          },
+        }),
+        url: "https://example.com/x402/defi/price",
+        requestInit: {
+          method: "GET",
+        },
+      });
+
+      t.equal(header.detectedVersion, 2);
+      t.equal(header.header.name, V2_PAYMENT_HEADER);
+
+      const payload = decodeBase64Json(header.header.value) as {
+        extensions?: {
+          "payment-identifier"?: {
+            info?: {
+              id?: string;
+            };
+          };
+          bazaar?: unknown;
+        };
+      };
+
+      t.match(payload, {
+        x402Version: 2,
+        accepted: {
+          amount: "3000",
+          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        },
+        payload: { signature: "0xpaid-with-identifier" },
+        resource: {
+          url: "https://example.com/x402/defi/price",
+        },
+      });
+      t.match(
+        payload.extensions?.["payment-identifier"]?.info?.id ?? "",
+        /^pay_[A-Za-z0-9_-]{10,120}$/,
+      );
+      t.equal(payload.extensions?.bazaar, undefined);
     },
   );
 

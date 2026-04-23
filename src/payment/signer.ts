@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { normalizeNetworkId, translateNetworkToLegacy } from "@faremeter/info";
 import {
   lookupKnownAsset,
@@ -109,6 +110,7 @@ export type ParsedPaymentRequiredResponse = {
   detectedVersion: 1 | 2;
   accepts: x402PaymentRequirementsV2[];
   resource?: x402ResourceInfo;
+  extensions?: Record<string, unknown>;
 };
 
 export type PaymentRequirementSelection =
@@ -337,6 +339,7 @@ function parseDecodedPaymentRequiredValue(
       detectedVersion: 2,
       accepts: parsed.accepts,
       resource: parsed.resource,
+      ...(isRecord(parsed.extensions) ? { extensions: parsed.extensions } : {}),
     };
   } catch {
     // Fall through and try the legacy v1 challenge shape.
@@ -376,7 +379,7 @@ function parsePaymentRequiredHeaderValue(
 export async function extractPaymentRequiredResponse(
   response: Response,
   url: string,
-) {
+): Promise<ParsedPaymentRequiredResponse> {
   const paymentRequiredHeader =
     response.headers.get(V2_PAYMENT_REQUIRED_HEADER) ??
     response.headers.get("X-PAYMENT-REQUIRED");
@@ -415,6 +418,42 @@ function extractRequirementDecimals(
 
   const { decimals } = requirement.extra;
   return typeof decimals === "number" ? decimals : undefined;
+}
+
+function buildPaymentIdentifierExtension(
+  extensions: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!isRecord(extensions)) {
+    return undefined;
+  }
+
+  const paymentIdentifier = extensions["payment-identifier"];
+  if (!isRecord(paymentIdentifier)) {
+    return undefined;
+  }
+
+  const info = isRecord(paymentIdentifier.info) ? paymentIdentifier.info : {};
+  if (typeof info.id === "string" && info.id.length > 0) {
+    return {
+      "payment-identifier": {
+        info: {
+          id: info.id,
+        },
+      },
+    };
+  }
+
+  if (info.required !== true) {
+    return undefined;
+  }
+
+  return {
+    "payment-identifier": {
+      info: {
+        id: `pay_${randomUUID().replace(/-/g, "")}`,
+      },
+    },
+  };
 }
 
 function getRequirementNetworkFamily(network: string): "solana" | "evm" | null {
@@ -767,6 +806,9 @@ export function createBuildPaymentRetryHeader(
 
     const { payload } = await execer.exec();
     const decimals = extractRequirementDecimals(execer.requirements);
+    const extensions = buildPaymentIdentifierExtension(
+      paymentRequired.extensions,
+    );
     const header =
       paymentRequired.detectedVersion === 2
         ? {
@@ -776,6 +818,7 @@ export function createBuildPaymentRetryHeader(
                 x402Version: 2,
                 accepted: execer.requirements,
                 payload,
+                ...(extensions == null ? {} : { extensions }),
                 ...(paymentRequired.resource == null
                   ? {}
                   : { resource: paymentRequired.resource }),
@@ -798,8 +841,7 @@ export function createBuildPaymentRetryHeader(
           };
 
     return {
-      detectedVersion:
-        paymentRequired.detectedVersion as PaymentRetryHeaderResult["detectedVersion"],
+      detectedVersion: paymentRequired.detectedVersion,
       header,
       paymentInfo: {
         amount: execer.requirements.amount,
