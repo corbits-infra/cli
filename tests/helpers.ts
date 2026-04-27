@@ -1,10 +1,19 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 export function mockFetch(
   handler: (url: string) => { status: number; body: unknown },
 ) {
   const original = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = typeof input === "string" ? input : input.toString();
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     calls.push(url);
     const { status, body } = handler(url);
     return {
@@ -25,7 +34,7 @@ export function mockFetch(
 }
 
 export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
-  const original = process.stdout.write;
+  const original = process.stdout.write.bind(process.stdout);
   let captured = "";
   process.stdout.write = ((chunk: string) => {
     captured += chunk;
@@ -38,7 +47,7 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
         process.stdout.write = original;
         return captured;
       },
-      (err) => {
+      (err: unknown) => {
         process.stdout.write = original;
         throw err;
       },
@@ -46,6 +55,53 @@ export function captureStdout(fn: () => void | Promise<void>): Promise<string> {
   }
   process.stdout.write = original;
   return Promise.resolve(captured);
+}
+
+function hasTeardown(
+  test: unknown,
+): test is { teardown(fn: () => void | Promise<void>): void } {
+  return (
+    typeof test === "object" &&
+    test !== null &&
+    "teardown" in test &&
+    typeof test.teardown === "function"
+  );
+}
+
+export function withTempConfigHome(test: unknown): string {
+  const dir = path.join(
+    os.tmpdir(),
+    `corbits-config-${process.pid}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2)}`,
+  );
+
+  if (!hasTeardown(test)) {
+    throw new Error("withTempConfigHome requires a tap test context");
+  }
+
+  process.env.XDG_CONFIG_HOME = dir;
+  test.teardown(async () => {
+    delete process.env.XDG_CONFIG_HOME;
+    delete process.env.NO_DNA;
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  return dir;
+}
+
+export async function writeConfig(
+  configHome: string,
+  body: string,
+): Promise<void> {
+  await fs.mkdir(path.join(configHome, "corbits"), { recursive: true });
+  await fs.writeFile(path.join(configHome, "corbits", "config.toml"), body, {
+    mode: 0o600,
+  });
+}
+
+export async function readTempConfigFile(configHome: string): Promise<string> {
+  return fs.readFile(path.join(configHome, "corbits", "config.toml"), "utf8");
 }
 
 export const validProxy = {
