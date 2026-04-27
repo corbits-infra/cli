@@ -38,7 +38,7 @@ type WgetExecutionPlan = {
   stripInjectedServerResponse: boolean;
 };
 
-export function hasMultipleWrappedUrls(args: string[]): boolean {
+export function hasMultipleWrappedURLs(args: string[]): boolean {
   let count = 0;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -258,7 +258,7 @@ export async function runWget(
   extraHeader?: RetryHeader,
   streamOutput = false,
 ): Promise<WrappedRunResult> {
-  if (hasMultipleWrappedUrls(args)) {
+  if (hasMultipleWrappedURLs(args)) {
     throw new Error(
       "wget multi-URL invocations are not supported; only one URL can be retried safely after a 402 challenge",
     );

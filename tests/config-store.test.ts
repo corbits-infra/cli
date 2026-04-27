@@ -54,7 +54,7 @@ await t.test("config storage", async (t) => {
       kind: "ows",
       walletId: "primary-evm",
     });
-    t.equal(loaded?.resolved.payment.rpcUrl, "https://base.example");
+    t.equal(loaded?.resolved.payment.rpcURL, "https://base.example");
     t.end();
   });
 });

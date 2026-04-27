@@ -5,9 +5,9 @@ import {
   search,
   listAllProxies,
   getProxy,
-  getProxyOpenapi,
+  getProxyOpenAPI,
   listAllProxyEndpoints,
-  ApiError,
+  APIError,
   ValidationError,
   qs,
 } from "../src/api/client.js";
@@ -240,7 +240,7 @@ await t.test("getProxy", async (t) => {
   });
 });
 
-await t.test("getProxyOpenapi", async (t) => {
+await t.test("getProxyOpenAPI", async (t) => {
   withTempConfigHome(t);
   await t.test("returns validated openapi response", async (t) => {
     const mock = mockFetch(() => ({
@@ -251,7 +251,7 @@ await t.test("getProxyOpenapi", async (t) => {
     }));
     t.teardown(mock.restore);
 
-    const result = await getProxyOpenapi(1);
+    const result = await getProxyOpenAPI(1);
     t.equal(result.data.name, "helius");
     t.ok(mock.calls[0]?.endsWith("/api/v1/proxies/1/openapi"));
     t.end();
@@ -260,7 +260,7 @@ await t.test("getProxyOpenapi", async (t) => {
 
 await t.test("error handling", async (t) => {
   withTempConfigHome(t);
-  await t.test("throws ApiError on non-ok response", async (t) => {
+  await t.test("throws APIError on non-ok response", async (t) => {
     const mock = mockFetch(() => ({
       status: 404,
       body: { error: "Proxy not found" },
@@ -271,9 +271,9 @@ await t.test("error handling", async (t) => {
       await getProxy(999);
       t.fail("should have thrown");
     } catch (err) {
-      t.ok(err instanceof ApiError);
-      t.equal((err as ApiError).status, 404);
-      t.ok((err as ApiError).message.includes("404"));
+      t.ok(err instanceof APIError);
+      t.equal((err as APIError).status, 404);
+      t.ok((err as APIError).message.includes("404"));
     }
     t.end();
   });

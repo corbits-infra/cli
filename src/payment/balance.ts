@@ -5,9 +5,10 @@ import {
 } from "@solana/spl-token";
 import { createPublicClient, http, isAddress, type PublicClient } from "viem";
 import { base, baseSepolia } from "viem/chains";
-import { erc20 } from "@faremeter/payment-evm";
 import { lookupKnownAsset } from "@faremeter/info/evm";
 import { lookupKnownSPLToken } from "@faremeter/info/solana";
+import { erc20 } from "@faremeter/payment-evm";
+import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@faremeter/types/x402v2";
 import { ConfigError } from "../config/index.js";
 import type { PaymentNetwork, ResolvedConfig } from "../config/index.js";
 import {
@@ -27,14 +28,13 @@ import {
   selectPaymentRequirement,
 } from "./signer.js";
 import type { WrappedRunResult } from "../process/wrapped-client.js";
-import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@faremeter/types/x402v2";
 
 const USDC_DECIMALS = 6;
 
 export type BalanceLookupTarget = {
   network: PaymentNetwork;
   address: string;
-  rpcUrl: string;
+  rpcURL: string;
 };
 
 export type BalanceRecord = {
@@ -52,11 +52,11 @@ type BalanceResolution = {
 
 export type BalanceDeps = {
   getSolanaTokenBalance: (
-    rpcUrl: string,
+    rpcURL: string,
     mint: string,
     owner: string,
   ) => Promise<bigint>;
-  getEvmPublicClient: (rpcUrl: string, chainId: number) => PublicClient;
+  getEvmPublicClient: (rpcURL: string, chainId: number) => PublicClient;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   lookupKnownAsset: typeof lookupKnownAsset;
 };
@@ -67,7 +67,7 @@ export type PreflightBalanceDeps = BalanceDeps & {
     url: string,
   ) => Promise<{ accepts: x402PaymentRequirementsV2[] }>;
   solanaTokenAccountExists: (
-    rpcUrl: string,
+    rpcURL: string,
     mint: string,
     owner: string,
     tokenProgram?: string,
@@ -80,7 +80,7 @@ async function resolveSolanaBalance(
   deps: BalanceDeps,
 ): Promise<BalanceResolution> {
   const rawAmount = await deps.getSolanaTokenBalance(
-    target.rpcUrl,
+    target.rpcURL,
     asset.asset,
     target.address,
   );
@@ -105,7 +105,7 @@ async function resolveEvmBalance(
   deps: BalanceDeps,
 ): Promise<BalanceResolution> {
   const chainInfo = getEvmChainInfoForNetwork(target.network);
-  const client = deps.getEvmPublicClient(target.rpcUrl, chainInfo.id);
+  const client = deps.getEvmPublicClient(target.rpcURL, chainInfo.id);
   const result = await erc20.getTokenBalance({
     account: target.address as `0x${string}`,
     asset: asset.asset as `0x${string}`,
@@ -173,7 +173,7 @@ export async function checkPreflightBalance(
   const target: BalanceLookupTarget = {
     network: config.payment.network,
     address: config.payment.address,
-    rpcUrl: config.payment.rpcUrl,
+    rpcURL: config.payment.rpcURL,
   };
 
   const requiredRaw = selection.selected.requirement.amount;
@@ -187,7 +187,7 @@ export async function checkPreflightBalance(
         ? selection.selected.requirement.extra.tokenProgram
         : undefined;
     const receiverAccountExists = await deps.solanaTokenAccountExists(
-      target.rpcUrl,
+      target.rpcURL,
       selection.selected.asset,
       selection.selected.requirement.payTo,
       tokenProgram,
@@ -202,7 +202,7 @@ export async function checkPreflightBalance(
   const balance =
     family === "solana"
       ? await deps.getSolanaTokenBalance(
-          target.rpcUrl,
+          target.rpcURL,
           selection.selected.asset,
           target.address,
         )
@@ -211,7 +211,7 @@ export async function checkPreflightBalance(
             account: target.address as `0x${string}`,
             asset: selection.selected.asset as `0x${string}`,
             client: deps.getEvmPublicClient(
-              target.rpcUrl,
+              target.rpcURL,
               getEvmChainInfoForNetwork(target.network).id,
             ),
           })
@@ -258,43 +258,61 @@ export function buildTargetFromOverrides(
   return {
     network,
     address,
-    rpcUrl: getPaymentNetworkDefaults(network).rpcUrl,
+    rpcURL: getPaymentNetworkDefaults(network).rpcURL,
   };
 }
 
 async function getSolanaTokenBalanceDefault(
-  rpcUrl: string,
+  rpcURL: string,
   mint: string,
   owner: string,
 ): Promise<bigint> {
-  type ParsedTokenAccountData = {
-    parsed: {
-      info: {
-        tokenAmount: {
-          amount: string;
-        };
-      };
-    };
-  };
-
-  const connection = new Connection(rpcUrl, "confirmed");
+  const connection = new Connection(rpcURL, "confirmed");
   const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
     new PublicKey(owner),
     { mint: new PublicKey(mint) },
   );
   return tokenAccounts.value.reduce((sum, account) => {
-    const parsed = account.account.data as ParsedTokenAccountData;
-    return sum + BigInt(parsed.parsed.info.tokenAmount.amount);
+    return sum + BigInt(readParsedTokenAmount(account.account.data));
   }, 0n);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readParsedTokenAmount(data: unknown): string {
+  if (!isRecord(data)) {
+    throw new ConfigError("Solana token account response is not parsed");
+  }
+  const { parsed } = data;
+  if (!isRecord(parsed)) {
+    throw new ConfigError(
+      "Solana token account response is missing parsed data",
+    );
+  }
+  const { info } = parsed;
+  if (!isRecord(info)) {
+    throw new ConfigError(
+      "Solana token account response is missing token info",
+    );
+  }
+  const { tokenAmount } = info;
+  if (!isRecord(tokenAmount) || typeof tokenAmount.amount !== "string") {
+    throw new ConfigError(
+      "Solana token account response is missing token amount",
+    );
+  }
+  return tokenAmount.amount;
+}
+
 async function solanaTokenAccountExistsDefault(
-  rpcUrl: string,
+  rpcURL: string,
   mint: string,
   owner: string,
   tokenProgram?: string,
 ): Promise<boolean> {
-  const connection = new Connection(rpcUrl, "confirmed");
+  const connection = new Connection(rpcURL, "confirmed");
   const account = getAssociatedTokenAddressSync(
     new PublicKey(mint),
     new PublicKey(owner),
@@ -313,14 +331,14 @@ const EVM_CHAINS: Record<
 };
 
 function getEvmPublicClientDefault(
-  rpcUrl: string,
+  rpcURL: string,
   chainId: number,
 ): PublicClient {
   const chain = EVM_CHAINS[chainId];
   if (chain == null) {
     throw new ConfigError(`Unsupported EVM chain ID: ${chainId}`);
   }
-  return createPublicClient({ chain, transport: http(rpcUrl) });
+  return createPublicClient({ chain, transport: http(rpcURL) });
 }
 
 export const defaultBalanceDeps: BalanceDeps = {

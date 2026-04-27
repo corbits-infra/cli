@@ -51,7 +51,7 @@ await t.test("config parsing and resolution", async (t) => {
     t.equal(getWalletFamilyForNetwork("base-sepolia"), "evm");
     t.same(getPaymentNetworkDefaults("mainnet-beta"), {
       asset: "USDC",
-      rpcUrl: "https://api.mainnet-beta.solana.com",
+      rpcURL: "https://api.mainnet-beta.solana.com",
     });
     t.end();
   });
@@ -80,7 +80,7 @@ await t.test("config parsing and resolution", async (t) => {
         family: "solana",
         address: "7xKX...",
         asset: "USDC",
-        rpcUrl: "https://rpc.devnet.example",
+        rpcURL: "https://rpc.devnet.example",
       });
       t.match(stringifyConfig(parsed), /\[payment\]\nnetwork = "devnet"/);
       t.end();
@@ -126,7 +126,7 @@ wallet_id = "primary-evm"
         family: "evm",
         address: "0x1234",
         asset: "USDC",
-        rpcUrl: "https://base-sepolia.example",
+        rpcURL: "https://base-sepolia.example",
       });
       t.end();
     },

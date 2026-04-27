@@ -23,6 +23,10 @@ export function getConfigPath(configPath?: string): string {
   return path.join(base, "corbits", "config.toml");
 }
 
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err;
+}
+
 export async function loadConfig(
   configPath?: string,
 ): Promise<LoadedConfig | null> {
@@ -43,7 +47,7 @@ export async function loadConfig(
       resolved: resolveConfig(config),
     };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoException(err) && err.code === "ENOENT") {
       return null;
     }
     if (err instanceof ConfigError) throw err;

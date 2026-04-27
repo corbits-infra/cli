@@ -9,7 +9,7 @@ import {
 } from "../history/store.js";
 import {
   formatDisplayTokenAmount,
-  printJson,
+  printJSON,
   printTable,
   printYaml,
   type OutputFormat,
@@ -155,7 +155,7 @@ function hasListFilters(args: HistoryCommandArgs): boolean {
 
 function printHistoryList(format: OutputFormat, entries: HistoryEntry[]): void {
   if (format === "json") {
-    printJson(
+    printJSON(
       entries.map((entry) => ({
         index: entry.index,
         ...toDisplayHistoryRecord(entry.record),
@@ -221,7 +221,7 @@ function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
           };
 
   if (format === "json") {
-    printJson(detail);
+    printJSON(detail);
     return;
   }
 

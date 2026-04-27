@@ -1,6 +1,6 @@
 import type { OutputFormat } from "../output/format.js";
 import {
-  printJson,
+  printJSON,
   printTable,
   printYaml,
   writeLine,
@@ -20,7 +20,7 @@ type ConfigView = {
     api_url: string;
   };
   payment: {
-    network: string;
+    network: PaymentNetwork;
     family: string;
     address: string;
     asset: string;
@@ -81,7 +81,7 @@ function buildConfigView(loaded: LoadedConfig): ConfigView {
       family: loaded.resolved.payment.family,
       address: loaded.resolved.payment.address,
       asset: loaded.resolved.payment.asset,
-      rpc_url: loaded.resolved.payment.rpcUrl,
+      rpc_url: loaded.resolved.payment.rpcURL,
       ...(loaded.config.payment.rpc_url_overrides?.[
         loaded.config.payment.network
       ] == null
@@ -112,7 +112,7 @@ export function printConfigView(
   const view = buildConfigView(loaded);
 
   if (format === "json") {
-    printJson(view);
+    printJSON(view);
     return;
   }
 
@@ -123,9 +123,7 @@ export function printConfigView(
 
   writeLine(`Config path: ${view.path}`);
   writeLine(
-    `Payment network: ${formatPaymentNetworkDisplay(
-      view.payment.network as PaymentNetwork,
-    )}`,
+    `Payment network: ${formatPaymentNetworkDisplay(view.payment.network)}`,
   );
   writeLine(`Payment family: ${view.payment.family}`);
   writeLine(`Default format: ${view.preferences.format}`);
@@ -171,7 +169,7 @@ export function printMissingConfig(path: string, format: OutputFormat): void {
   };
 
   if (format === "json") {
-    printJson(payload);
+    printJSON(payload);
     return;
   }
 

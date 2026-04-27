@@ -108,7 +108,7 @@ export function createHistoryRecord(args: HistoryWriteInput): HistoryRecord {
     throw new Error(`Invalid history record: ${result.summary}`);
   }
 
-  return result as HistoryRecord;
+  return result;
 }
 
 export async function appendHistoryRecord(
@@ -176,7 +176,7 @@ function parseHistoryRecord(line: string): HistoryRecord | null {
     return null;
   }
 
-  return result as HistoryRecord;
+  return result;
 }
 
 function parseHistoryRecordOrThrow(line: string, index: number): HistoryRecord {
@@ -196,7 +196,7 @@ function parseHistoryRecordOrThrow(line: string, index: number): HistoryRecord {
     throw new Error(`History entry #${index} is malformed`);
   }
 
-  return result as HistoryRecord;
+  return result;
 }
 
 function getHistoryDirectory(historyPath?: string): string {

@@ -1,19 +1,20 @@
-import {
-  caip2ToLegacyNetworkIds,
-  caip2ToCluster,
-  lookupKnownSPLToken,
-  type KnownSPLToken,
-} from "@faremeter/info/solana";
+import { PublicKey } from "@solana/web3.js";
+import { isAddress } from "viem";
+import { normalizeNetworkId } from "@faremeter/info";
 import {
   caip2ToChainId,
   caip2ToLegacyName,
   lookupKnownAsset,
   type KnownAsset,
 } from "@faremeter/info/evm";
-import { normalizeNetworkId } from "@faremeter/info";
-import { PublicKey } from "@solana/web3.js";
-import { isAddress } from "viem";
+import {
+  caip2ToLegacyNetworkIds,
+  caip2ToCluster,
+  lookupKnownSPLToken,
+  type KnownSPLToken,
+} from "@faremeter/info/solana";
 import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@faremeter/types/x402v2";
+
 import { ConfigError } from "../config/index.js";
 import {
   formatPaymentNetworkDisplay,

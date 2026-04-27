@@ -13,7 +13,7 @@ import {
 
 const { discover } = await import("../src/commands/discover.js");
 
-function parseJson(value: string): unknown {
+function parseJSON(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
@@ -166,7 +166,7 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = parseJson(output) as { name: string }[];
+    const parsed = parseJSON(output) as { name: string }[];
     t.ok(Array.isArray(parsed));
     t.equal(parsed.at(0)?.name, "helius");
     t.end();
@@ -208,7 +208,7 @@ await t.test("discover command", async (t) => {
         format: "json",
       }),
     );
-    const parsed = parseJson(output) as {
+    const parsed = parseJSON(output) as {
       proxies: unknown[];
       endpoints: unknown[];
     };
@@ -236,7 +236,7 @@ await t.test("discover command", async (t) => {
     const output = await captureStdout(() =>
       discover.handler({ query: undefined, tag: undefined, format: undefined }),
     );
-    const parsed = parseJson(output) as { name: string }[];
+    const parsed = parseJSON(output) as { name: string }[];
     t.ok(Array.isArray(parsed));
     t.equal(parsed.at(0)?.name, "helius");
     t.end();

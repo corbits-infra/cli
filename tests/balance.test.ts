@@ -21,13 +21,13 @@ import type { KnownPaymentAssetDetails } from "../src/payment/requirements.js";
 
 const solanaConfig: ResolvedConfig = {
   version: 1 as const,
-  preferences: { format: "table" as const, apiUrl: "https://api.corbits.dev" },
+  preferences: { format: "table" as const, apiURL: "https://api.corbits.dev" },
   payment: {
     network: "devnet" as const,
     family: "solana" as const,
     address: "So11111111111111111111111111111111111111112",
     asset: "USDC",
-    rpcUrl: "https://api.devnet.solana.com",
+    rpcURL: "https://api.devnet.solana.com",
   },
   activeWallet: {
     kind: "keypair" as const,
@@ -171,7 +171,7 @@ await t.test("resolveAssetBalance", async (t) => {
       {
         network: "devnet",
         address: "So11111111111111111111111111111111111111112",
-        rpcUrl: "https://api.devnet.solana.com",
+        rpcURL: "https://api.devnet.solana.com",
       },
       usdcAsset,
       makeBalanceDeps(0n),
@@ -189,7 +189,7 @@ await t.test("resolveAssetBalance", async (t) => {
         {
           network: "devnet",
           address: "So11111111111111111111111111111111111111112",
-          rpcUrl: "https://api.devnet.solana.com",
+          rpcURL: "https://api.devnet.solana.com",
         },
         usdtAsset,
         makeBalanceDeps(500000n),
@@ -207,7 +207,7 @@ await t.test("resolveAssetBalance", async (t) => {
         {
           network: "base",
           address: "0x1234000000000000000000000000000000000000",
-          rpcUrl: "https://mainnet.base.org",
+          rpcURL: "https://mainnet.base.org",
         },
         baseUsdcAsset,
         makeEvmBalanceDeps(1_500_000n),
@@ -228,7 +228,7 @@ await t.test("resolveUsdcBalance", async (t) => {
       {
         network: "devnet",
         address: "So11111111111111111111111111111111111111112",
-        rpcUrl: "https://api.devnet.solana.com",
+        rpcURL: "https://api.devnet.solana.com",
       },
       makeBalanceDeps(0n),
     );
@@ -245,7 +245,7 @@ await t.test("resolveUsdcBalance", async (t) => {
         {
           network: "devnet",
           address: "So11111111111111111111111111111111111111112",
-          rpcUrl: "https://api.devnet.solana.com",
+          rpcURL: "https://api.devnet.solana.com",
         },
         makeBalanceDeps(500000n),
       );
@@ -259,7 +259,7 @@ await t.test("resolveUsdcBalance", async (t) => {
       {
         network: "mainnet-beta",
         address: "So11111111111111111111111111111111111111112",
-        rpcUrl: "https://api.mainnet-beta.solana.com",
+        rpcURL: "https://api.mainnet-beta.solana.com",
       },
       makeBalanceDeps(10_000_000n),
     );
@@ -278,7 +278,7 @@ await t.test("resolveUsdcBalance", async (t) => {
         {
           network: "base",
           address: "0x1234000000000000000000000000000000000000",
-          rpcUrl: "https://mainnet.base.org",
+          rpcURL: "https://mainnet.base.org",
         },
         makeEvmBalanceDeps(1_500_000n),
       );
@@ -336,7 +336,7 @@ await t.test("buildTargetFromOverrides", async (t) => {
     );
     t.equal(target.network, "devnet");
     t.equal(target.address, "So11111111111111111111111111111111111111112");
-    t.match(target.rpcUrl, /devnet\.solana\.com/);
+    t.match(target.rpcURL, /devnet\.solana\.com/);
   });
 
   await t.test("builds an EVM target with default RPC URL", async (t) => {
@@ -345,7 +345,7 @@ await t.test("buildTargetFromOverrides", async (t) => {
       "0x1234000000000000000000000000000000000000",
     );
     t.equal(target.network, "base");
-    t.match(target.rpcUrl, /base\.org/);
+    t.match(target.rpcURL, /base\.org/);
   });
 
   await t.test(
@@ -413,7 +413,7 @@ await t.test("checkPreflightBalance", async (t) => {
               ...solanaConfig.payment,
               asset: "USDT",
               network: "mainnet-beta",
-              rpcUrl: "https://api.mainnet-beta.solana.com",
+              rpcURL: "https://api.mainnet-beta.solana.com",
             },
           },
           makePaymentRequiredResult({
@@ -645,7 +645,7 @@ await t.test("balance command", async (t) => {
             payment: {
               ...solanaConfig.payment,
               network: "mainnet-beta",
-              rpcUrl: "https://api.mainnet-beta.solana.com",
+              rpcURL: "https://api.mainnet-beta.solana.com",
             },
           }),
         resolveAssetBalance: async (_target, asset) => {
@@ -689,7 +689,7 @@ await t.test("balance command", async (t) => {
               network: "base",
               family: "evm",
               address: "0x1234000000000000000000000000000000000000",
-              rpcUrl: "https://mainnet.base.org",
+              rpcURL: "https://mainnet.base.org",
             },
             activeWallet: {
               kind: "ows",
@@ -752,7 +752,7 @@ await t.test("balance command", async (t) => {
             payment: {
               ...solanaConfig.payment,
               network: "mainnet-beta",
-              rpcUrl: "https://api.mainnet-beta.solana.com",
+              rpcURL: "https://api.mainnet-beta.solana.com",
             },
           }),
         resolveAssetBalance: async () => {

@@ -25,14 +25,14 @@ const resolvedConfig = {
   version: 1,
   preferences: {
     format: "table",
-    apiUrl: "https://api.corbits.dev",
+    apiURL: "https://api.corbits.dev",
   },
   payment: {
     network: "devnet",
     family: "solana",
     address: "So11111111111111111111111111111111111111112",
     asset: "USDC",
-    rpcUrl: "https://api.devnet.solana.com",
+    rpcURL: "https://api.devnet.solana.com",
   },
   spending: {},
   activeWallet: {
@@ -230,7 +230,7 @@ await t.test("call wrapper helpers", async (t) => {
     "extracts the first wrapped URL from passthrough args",
     async (t) => {
       t.equal(
-        testExports.extractFirstUrl([
+        testExports.extractFirstURL([
           "--url",
           "https://example.com/items",
           "-d",
@@ -239,14 +239,14 @@ await t.test("call wrapper helpers", async (t) => {
         "https://example.com/items",
       );
       t.equal(
-        testExports.extractFirstUrl([
+        testExports.extractFirstURL([
           "https://example.com/items",
           "https://example.com/other",
         ]),
         "https://example.com/items",
       );
       t.equal(
-        testExports.extractFirstUrl([
+        testExports.extractFirstURL([
           "--method=post",
           "https://example.com/items",
         ]),
@@ -324,7 +324,7 @@ await t.test("call wrapper helpers", async (t) => {
       t.equal(curlGetRequest.requestInit.method, "GET");
       t.notOk("body" in curlGetRequest.requestInit);
 
-      const curlUnnamedUrlEncodedRequest =
+      const curlUnnamedURLEncodedRequest =
         await testExports.parseWrappedRequestInfo(
           {
             readBinaryFile: async () => Buffer.from("unused"),
@@ -338,11 +338,11 @@ await t.test("call wrapper helpers", async (t) => {
           ],
         );
       t.equal(
-        curlUnnamedUrlEncodedRequest.url,
+        curlUnnamedURLEncodedRequest.url,
         "https://example.com/items?hello+world",
       );
-      t.equal(curlUnnamedUrlEncodedRequest.requestInit.method, "GET");
-      t.notOk("body" in curlUnnamedUrlEncodedRequest.requestInit);
+      t.equal(curlUnnamedURLEncodedRequest.requestInit.method, "GET");
+      t.notOk("body" in curlUnnamedURLEncodedRequest.requestInit);
 
       const explicitGetRequest = await testExports.parseWrappedRequestInfo(
         {

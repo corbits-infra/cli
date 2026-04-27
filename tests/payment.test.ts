@@ -29,14 +29,14 @@ function createSolanaKeypairConfig() {
     version: 1 as const,
     preferences: {
       format: "table" as const,
-      apiUrl: "https://api.corbits.dev",
+      apiURL: "https://api.corbits.dev",
     },
     payment: {
       network: "devnet" as const,
       family: "solana" as const,
       address: "So11111111111111111111111111111111111111112",
       asset: "USDC",
-      rpcUrl: "https://api.devnet.solana.com",
+      rpcURL: "https://api.devnet.solana.com",
     },
     activeWallet: {
       kind: "keypair" as const,
@@ -53,14 +53,14 @@ function createEvmKeypairConfig() {
     version: 1 as const,
     preferences: {
       format: "table" as const,
-      apiUrl: "https://api.corbits.dev",
+      apiURL: "https://api.corbits.dev",
     },
     payment: {
       network: "base" as const,
       family: "evm" as const,
       address: "0x1234000000000000000000000000000000000000",
       asset: "USDC",
-      rpcUrl: "https://mainnet.base.org",
+      rpcURL: "https://mainnet.base.org",
     },
     activeWallet: {
       kind: "keypair" as const,
@@ -77,14 +77,14 @@ function createSolanaOwsConfig() {
     version: 1 as const,
     preferences: {
       format: "table" as const,
-      apiUrl: "https://api.corbits.dev",
+      apiURL: "https://api.corbits.dev",
     },
     payment: {
       network: "devnet" as const,
       family: "solana" as const,
       address: "So11111111111111111111111111111111111111112",
       asset: "USDC",
-      rpcUrl: "https://api.devnet.solana.com",
+      rpcURL: "https://api.devnet.solana.com",
     },
     activeWallet: {
       kind: "ows" as const,
@@ -100,14 +100,14 @@ function createEvmOwsConfig() {
     version: 1 as const,
     preferences: {
       format: "table" as const,
-      apiUrl: "https://api.corbits.dev",
+      apiURL: "https://api.corbits.dev",
     },
     payment: {
       network: "base" as const,
       family: "evm" as const,
       address: "0x1234000000000000000000000000000000000000",
       asset: "USDC",
-      rpcUrl: "https://mainnet.base.org",
+      rpcURL: "https://mainnet.base.org",
     },
     activeWallet: {
       kind: "ows" as const,
@@ -118,7 +118,7 @@ function createEvmOwsConfig() {
   };
 }
 
-function decodeBase64Json(value: string): unknown {
+function decodeBase64JSON(value: string): unknown {
   return JSON.parse(Buffer.from(value, "base64").toString("utf8")) as unknown;
 }
 
@@ -579,7 +579,7 @@ await t.test("payment signer", async (t) => {
           payment: {
             ...createSolanaKeypairConfig().payment,
             network: "mainnet-beta",
-            rpcUrl: "https://api.mainnet-beta.solana.com",
+            rpcURL: "https://api.mainnet-beta.solana.com",
           },
         },
         response: new Response("", {
@@ -637,7 +637,7 @@ await t.test("payment signer", async (t) => {
       t.equal(header.detectedVersion, 2);
       t.equal(header.header.name, V2_PAYMENT_HEADER);
 
-      const payload = decodeBase64Json(header.header.value) as {
+      const payload = decodeBase64JSON(header.header.value) as {
         extensions?: {
           "payment-identifier"?: {
             info?: {
@@ -706,7 +706,7 @@ await t.test("payment signer", async (t) => {
             ...createSolanaKeypairConfig().payment,
             asset: "USDT",
             network: "mainnet-beta",
-            rpcUrl: "https://api.mainnet-beta.solana.com",
+            rpcURL: "https://api.mainnet-beta.solana.com",
           },
         },
         response: new Response(
@@ -780,7 +780,7 @@ await t.test("payment signer", async (t) => {
               ...createSolanaKeypairConfig().payment,
               asset: "USDT",
               network: "mainnet-beta",
-              rpcUrl: "https://api.mainnet-beta.solana.com",
+              rpcURL: "https://api.mainnet-beta.solana.com",
             },
           },
           response: new Response(
@@ -856,7 +856,7 @@ await t.test("payment signer", async (t) => {
             ...createSolanaKeypairConfig().payment,
             asset: "USDT",
             network: "mainnet-beta",
-            rpcUrl: "https://api.mainnet-beta.solana.com",
+            rpcURL: "https://api.mainnet-beta.solana.com",
           },
         },
         response: new Response(
@@ -928,7 +928,7 @@ await t.test("payment signer", async (t) => {
             payment: {
               ...createSolanaKeypairConfig().payment,
               network: "mainnet-beta",
-              rpcUrl: "https://api.mainnet-beta.solana.com",
+              rpcURL: "https://api.mainnet-beta.solana.com",
             },
           },
           response: new Response(

@@ -10,7 +10,7 @@ import {
 
 const { inspect } = await import("../src/commands/inspect.js");
 
-function parseJson(value: string): unknown {
+function parseJSON(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
@@ -67,7 +67,7 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: false, format: "json" }),
     );
-    const parsed = parseJson(output) as {
+    const parsed = parseJSON(output) as {
       proxy: { name: string };
       endpoints: { path_pattern: string }[];
     };
@@ -102,7 +102,7 @@ await t.test("inspect command", async (t) => {
     const output = await captureStdout(() =>
       inspect.handler({ proxyId: 1, openapi: false, format: undefined }),
     );
-    const parsed = parseJson(output) as {
+    const parsed = parseJSON(output) as {
       proxy: { name: string };
       endpoints: { path_pattern: string }[];
     };
@@ -172,7 +172,7 @@ await t.test("inspect command", async (t) => {
       const output = await captureStdout(() =>
         inspect.handler({ proxyId: 1, openapi: true, format: "json" }),
       );
-      const parsed = parseJson(output) as { openapi: string };
+      const parsed = parseJSON(output) as { openapi: string };
       t.equal(parsed.openapi, "3.0.0");
       t.equal(mock.calls.length, 1);
       t.match(mock.calls.at(0), /\/openapi$/);

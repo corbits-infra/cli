@@ -6,20 +6,21 @@ import {
   type WalletInfo,
 } from "@open-wallet-standard/core";
 import {
-  lookupKnownAsset,
-  lookupX402Network,
-  type KnownAsset,
-} from "@faremeter/info/evm";
-import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
-import { exact as evmExact } from "@faremeter/payment-evm";
-import { exact as solanaExact } from "@faremeter/payment-solana";
-import type { PaymentHandler } from "@faremeter/types/client";
-import {
   Connection,
   PublicKey,
   type VersionedTransaction,
 } from "@solana/web3.js";
 import { fromHex, isAddress, isAddressEqual, isHex, type Hex } from "viem";
+import {
+  isKnownAsset,
+  lookupKnownAsset,
+  lookupX402Network,
+} from "@faremeter/info/evm";
+import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
+import { exact as evmExact } from "@faremeter/payment-evm";
+import { exact as solanaExact } from "@faremeter/payment-solana";
+import type { PaymentHandler } from "@faremeter/types/client";
+
 import { ConfigError } from "../config/index.js";
 import type {
   ResolvedConfig,
@@ -211,7 +212,7 @@ export type OwsDeps = {
   getWallet: typeof getWallet;
   signTransaction: typeof owsSignTransaction;
   signTypedData: typeof owsSignTypedData;
-  createConnection: (rpcUrl: string) => Connection;
+  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -250,7 +251,7 @@ function buildSolanaOwsPaymentHandler(
   }
 
   const publicKey = new PublicKey(walletAccount.account.address);
-  const connection = deps.createConnection(config.payment.rpcUrl);
+  const connection = deps.createConnection(config.payment.rpcURL);
   const mint = new PublicKey(asset);
   const wallet = buildSolanaOwsWallet(
     cluster,
@@ -306,7 +307,12 @@ function buildEvmOwsPaymentHandler(
     );
   }
 
-  const assetSymbol = (requirement?.symbol ?? "USDC") as KnownAsset;
+  const assetSymbol = requirement?.symbol ?? "USDC";
+  if (!isKnownAsset(assetSymbol)) {
+    throw new ConfigError(
+      `No known ${assetSymbol} asset for EVM network ${config.payment.network}`,
+    );
+  }
   const assetInfo = deps.lookupKnownAsset(chainInfo.id, assetSymbol);
   if (assetInfo == null) {
     throw new ConfigError(
@@ -355,7 +361,7 @@ export const buildOwsPaymentHandler = createBuildOwsPaymentHandler({
   getWallet,
   signTransaction: owsSignTransaction,
   signTypedData: owsSignTypedData,
-  createConnection: (rpcUrl) => new Connection(rpcUrl, "confirmed"),
+  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,

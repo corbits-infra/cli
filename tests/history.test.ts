@@ -166,7 +166,7 @@ await t.test("history command", async (t) => {
         }),
       ]);
 
-      const filteredJson = await captureStdout(() =>
+      const filteredJSON = await captureStdout(() =>
         historyCommand.handler({
           action: undefined,
           index: undefined,
@@ -183,7 +183,7 @@ await t.test("history command", async (t) => {
         }),
       );
 
-      const parsed = JSON.parse(filteredJson) as {
+      const parsed = JSON.parse(filteredJSON) as {
         index: number;
         amount: string;
       }[];

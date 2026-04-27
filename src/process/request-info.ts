@@ -5,11 +5,11 @@ import type {
   WrappedRequestInfo,
 } from "./types.js";
 
-function isHttpUrl(value: string): boolean {
+function isHTTPURL(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
-export function extractFirstUrl(args: string[]): string | null {
+export function extractFirstURL(args: string[]): string | null {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg == null) {
@@ -28,7 +28,7 @@ export function extractFirstUrl(args: string[]): string | null {
       return arg.slice("--url=".length);
     }
 
-    if (isHttpUrl(arg)) {
+    if (isHTTPURL(arg)) {
       return arg;
     }
   }
@@ -80,18 +80,18 @@ function appendQuerySegments(url: string, segments: string[]): string {
   }
 
   const hashIndex = url.indexOf("#");
-  const baseUrl = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const baseURL = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
   const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
-  const joiner = baseUrl.includes("?")
-    ? baseUrl.endsWith("?") || baseUrl.endsWith("&")
+  const joiner = baseURL.includes("?")
+    ? baseURL.endsWith("?") || baseURL.endsWith("&")
       ? ""
       : "&"
     : "?";
 
-  return `${baseUrl}${joiner}${segments.join("&")}${hash}`;
+  return `${baseURL}${joiner}${segments.join("&")}${hash}`;
 }
 
-function encodeFormUrlEncodedValue(value: string): string {
+function encodeFormURLEncodedValue(value: string): string {
   return encodeURIComponent(value).replace(/%20/g, "+");
 }
 
@@ -164,7 +164,7 @@ async function resolveCurlBody(
   return readBodyFile(deps, value.slice(1));
 }
 
-async function resolveCurlUrlEncodedBody(
+async function resolveCurlURLEncodedBody(
   deps: Pick<WrappedClientDeps, "readBinaryFile">,
   value: string,
 ): Promise<string> {
@@ -178,24 +178,24 @@ async function resolveCurlUrlEncodedBody(
   const atIndex = value.indexOf("@");
 
   if (value.startsWith("=")) {
-    return encodeFormUrlEncodedValue(value.slice(1));
+    return encodeFormURLEncodedValue(value.slice(1));
   }
 
   if (atIndex > 0 && (equalsIndex === -1 || atIndex < equalsIndex)) {
     const name = value.slice(0, atIndex);
     const filePath = value.slice(atIndex + 1);
-    return `${name}=${encodeFormUrlEncodedValue(
+    return `${name}=${encodeFormURLEncodedValue(
       Buffer.from(await readBodyFile(deps, filePath)).toString("utf8"),
     )}`;
   }
 
   if (equalsIndex >= 0) {
-    return `${value.slice(0, equalsIndex + 1)}${encodeFormUrlEncodedValue(
+    return `${value.slice(0, equalsIndex + 1)}${encodeFormURLEncodedValue(
       value.slice(equalsIndex + 1),
     )}`;
   }
 
-  return encodeFormUrlEncodedValue(value);
+  return encodeFormURLEncodedValue(value);
 }
 
 async function resolveWgetBody(
@@ -276,7 +276,7 @@ export async function parseWrappedRequestInfo(
   tool: WrappedClient,
   args: string[],
 ): Promise<WrappedRequestInfo> {
-  let url = extractFirstUrl(args) ?? "";
+  let url = extractFirstURL(args) ?? "";
 
   if (tool === "curl") {
     let method: string | undefined;
@@ -340,7 +340,7 @@ export async function parseWrappedRequestInfo(
         if (candidate != null) {
           body = combineWrappedBodies(
             body,
-            await resolveCurlUrlEncodedBody(deps, candidate),
+            await resolveCurlURLEncodedBody(deps, candidate),
           );
           method ??= "POST";
         }
@@ -370,7 +370,7 @@ export async function parseWrappedRequestInfo(
       if (arg.startsWith("--data-urlencode=")) {
         body = combineWrappedBodies(
           body,
-          await resolveCurlUrlEncodedBody(
+          await resolveCurlURLEncodedBody(
             deps,
             arg.slice("--data-urlencode=".length),
           ),

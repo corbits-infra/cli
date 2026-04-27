@@ -1,13 +1,13 @@
+import os from "node:os";
+import path from "node:path";
+
+import { type } from "arktype";
+import { parse, stringify } from "smol-toml";
 import {
   normalizeNetworkId,
   solana,
   translateNetworkToLegacy,
 } from "@faremeter/info";
-import { parse, stringify } from "smol-toml";
-
-import os from "node:os";
-import path from "node:path";
-import { type } from "arktype";
 
 // CLI-supported payment networks (single source of truth)
 const PAYMENT_NETWORKS = [
@@ -82,14 +82,12 @@ const ConfigFileSchema = type({
   "spending?": SpendingSectionSchema,
   wallets: WalletsSectionSchema,
 });
-type ConfigFile = typeof ConfigFileSchema.infer;
-
 export type WalletRegistry = {
   solana?: WalletConfig;
   evm?: WalletConfig;
 };
 
-export type RpcUrlOverrides = Partial<Record<PaymentNetwork, string>>;
+export type RPCURLOverrides = Partial<Record<PaymentNetwork, string>>;
 
 export type CorbitsConfig = {
   version: 1;
@@ -99,7 +97,7 @@ export type CorbitsConfig = {
   };
   payment: {
     network: PaymentNetwork;
-    rpc_url_overrides?: RpcUrlOverrides;
+    rpc_url_overrides?: RPCURLOverrides;
   };
   spending?: {
     confirm_above_usd?: string;
@@ -128,14 +126,14 @@ export type ResolvedConfig = {
   version: 1;
   preferences: {
     format: OutputFormat;
-    apiUrl: string;
+    apiURL: string;
   };
   payment: {
     network: PaymentNetwork;
     family: WalletFamily;
     address: string;
     asset: string;
-    rpcUrl: string;
+    rpcURL: string;
   };
   spending?: {
     confirmAboveUsd?: string;
@@ -154,17 +152,17 @@ type WalletInputs = {
 
 type ConfigInitInput = {
   network: string;
-  rpcUrl?: string;
+  rpcURL?: string;
   format?: OutputFormat;
-  apiUrl?: string;
+  apiURL?: string;
   confirmAboveUsd?: string;
 } & WalletInputs;
 
 export type ConfigUpdateInput = {
   network?: string;
-  rpcUrl?: string;
+  rpcURL?: string;
   format?: OutputFormat;
-  apiUrl?: string;
+  apiURL?: string;
   confirmAboveUsd?: string;
 } & WalletInputs;
 
@@ -225,9 +223,9 @@ export function getPaymentNetworkContext(network: PaymentNetwork): {
 
 export function getPaymentNetworkDefaults(network: PaymentNetwork): {
   asset: string;
-  rpcUrl: string;
+  rpcURL: string;
 } {
-  return { asset: "USDC", rpcUrl: DEFAULT_RPC_URLS[network] };
+  return { asset: "USDC", rpcURL: DEFAULT_RPC_URLS[network] };
 }
 
 function normalizeToPaymentNetwork(input: string): PaymentNetwork | null {
@@ -292,7 +290,7 @@ export function expandHome(value: string): string {
   return value;
 }
 
-function validateAbsoluteUrl(value: string, field: string): string {
+function validateAbsoluteURL(value: string, field: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -335,39 +333,46 @@ export function parseUsdAmountValue(value: unknown, field: string): string {
   );
 }
 
-function normalizeRpcUrlOverrides(
-  overrides: RpcUrlOverrides | undefined,
-): RpcUrlOverrides | undefined {
+function normalizeRPCURLOverrides(
+  overrides: RPCURLOverrides | undefined,
+): RPCURLOverrides | undefined {
   if (overrides == null) return undefined;
-  const normalized = Object.fromEntries(
-    Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)),
-  ) as RpcUrlOverrides;
+  const normalized: RPCURLOverrides = {};
+  for (const network of [...PAYMENT_NETWORKS].sort()) {
+    const rpcURL = overrides[network];
+    if (rpcURL != null) {
+      normalized[network] = rpcURL;
+    }
+  }
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-function parseRpcUrlOverrides(value: unknown): RpcUrlOverrides | undefined {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseRPCURLOverrides(value: unknown): RPCURLOverrides | undefined {
   if (value == null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new ConfigError("Config payment.rpc_url_overrides must be a table");
   }
-  const record = value as Record<string, unknown>;
-  const overrides: RpcUrlOverrides = {};
-  for (const [key, rpcUrl] of Object.entries(record)) {
+  const overrides: RPCURLOverrides = {};
+  for (const [key, rpcURL] of Object.entries(value)) {
     const network = normalizeToPaymentNetwork(key);
     if (network == null) {
       throw new ConfigError(
         `Config payment.rpc_url_overrides key "${key}" must be one of: ${formatSupportedPaymentNetworks()}`,
       );
     }
-    overrides[network] = validateAbsoluteUrl(
+    overrides[network] = validateAbsoluteURL(
       requireConfigString(
-        rpcUrl,
+        rpcURL,
         `Config payment.rpc_url_overrides.${network} must be a non-empty URL`,
       ),
       `payment.rpc_url_overrides.${network}`,
     );
   }
-  return normalizeRpcUrlOverrides(overrides);
+  return normalizeRPCURLOverrides(overrides);
 }
 
 function parseSpendingSection(
@@ -382,14 +387,13 @@ function parseSpendingSection(
     throw new ConfigError(`Config spending: ${result.summary}`);
   }
 
-  const spending = result as typeof SpendingSectionSchema.infer;
-  if (spending.confirm_above_usd == null) {
+  if (result.confirm_above_usd == null) {
     return undefined;
   }
 
   return {
     confirm_above_usd: parseUsdAmountValue(
-      spending.confirm_above_usd,
+      result.confirm_above_usd,
       "spending.confirm_above_usd",
     ),
   };
@@ -404,7 +408,7 @@ function parseWalletConfig(
   if (result instanceof type.errors) {
     throw new ConfigError(formatWalletError(result, family));
   }
-  return result as WalletConfig;
+  return result;
 }
 
 function formatWalletError(
@@ -419,10 +423,7 @@ function formatWalletError(
     "expected" in error &&
     error.expected === "removed"
   ) {
-    const record =
-      typeof error.data === "object" && error.data !== null
-        ? (error.data as Record<string, unknown>)
-        : {};
+    const record = isRecord(error.data) ? error.data : {};
     if (record.kind === "keypair" && key === "wallet_id") {
       return `Config wallets.${family}: wallet_id is not allowed when kind is "keypair"`;
     }
@@ -592,12 +593,12 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
   const wallets = buildWalletRegistry(input);
   requireWalletForFamily(wallets, getWalletFamilyForNetwork(network), network);
   const rpcOverride =
-    input.rpcUrl == null
+    input.rpcURL == null
       ? undefined
       : {
-          [network]: validateAbsoluteUrl(
+          [network]: validateAbsoluteURL(
             requireConfigString(
-              input.rpcUrl,
+              input.rpcURL,
               "config requires --rpc-url <url>",
             ),
             `payment.rpc_url_overrides.${network}`,
@@ -607,9 +608,9 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
     version: 1,
     preferences: {
       format: input.format ?? "table",
-      api_url: validateAbsoluteUrl(
+      api_url: validateAbsoluteURL(
         requireConfigString(
-          input.apiUrl ?? DEFAULT_API_URL,
+          input.apiURL ?? DEFAULT_API_URL,
           "config init requires --api-url <url>",
         ),
         "preferences.api_url",
@@ -645,13 +646,13 @@ export function updateConfig(
           "config set requires --network <name>",
         );
   const rpcOverride =
-    input.rpcUrl == null
+    input.rpcURL == null
       ? config.payment.rpc_url_overrides
-      : normalizeRpcUrlOverrides({
+      : normalizeRPCURLOverrides({
           ...(config.payment.rpc_url_overrides ?? {}),
-          [targetNetwork]: validateAbsoluteUrl(
+          [targetNetwork]: validateAbsoluteURL(
             requireConfigString(
-              input.rpcUrl,
+              input.rpcURL,
               "config requires --rpc-url <url>",
             ),
             `payment.rpc_url_overrides.${targetNetwork}`,
@@ -662,11 +663,11 @@ export function updateConfig(
     preferences: {
       format: input.format ?? config.preferences.format,
       api_url:
-        input.apiUrl == null
+        input.apiURL == null
           ? config.preferences.api_url
-          : validateAbsoluteUrl(
+          : validateAbsoluteURL(
               requireConfigString(
-                input.apiUrl,
+                input.apiURL,
                 "config set requires --api-url <url>",
               ),
               "preferences.api_url",
@@ -715,14 +716,14 @@ export function parseConfig(text: string): CorbitsConfig {
   if (result instanceof type.errors) {
     throw new ConfigError(formatConfigError(result));
   }
-  const config = result as ConfigFile;
+  const config = result;
   const network = parsePaymentNetwork(
     typeof config.payment.network === "string" ? config.payment.network : "",
     `Config payment.network must be one of: ${formatSupportedPaymentNetworks()}`,
   );
   const solanaWallet = parseWalletConfig(config.wallets.solana, "solana");
   const evmWallet = parseWalletConfig(config.wallets.evm, "evm");
-  const rpcUrlOverrides = parseRpcUrlOverrides(
+  const rpcURLOverrides = parseRPCURLOverrides(
     config.payment.rpc_url_overrides,
   );
   const spending = parseSpendingSection(config.spending);
@@ -730,7 +731,7 @@ export function parseConfig(text: string): CorbitsConfig {
     version: config.version,
     preferences: {
       format: config.preferences.format,
-      api_url: validateAbsoluteUrl(
+      api_url: validateAbsoluteURL(
         requireConfigString(
           config.preferences.api_url,
           "Config preferences.api_url must be a non-empty URL",
@@ -740,9 +741,9 @@ export function parseConfig(text: string): CorbitsConfig {
     },
     payment: {
       network,
-      ...(rpcUrlOverrides == null
+      ...(rpcURLOverrides == null
         ? {}
-        : { rpc_url_overrides: rpcUrlOverrides }),
+        : { rpc_url_overrides: rpcURLOverrides }),
     },
     ...(spending == null ? {} : { spending }),
     wallets: normalizeWalletRegistry({
@@ -759,7 +760,7 @@ export function parseConfig(text: string): CorbitsConfig {
 }
 
 export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
-  const rpcUrlOverrides = normalizeRpcUrlOverrides(
+  const rpcURLOverrides = normalizeRPCURLOverrides(
     config.payment.rpc_url_overrides,
   );
   return {
@@ -770,9 +771,9 @@ export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
     },
     payment: {
       network: config.payment.network,
-      ...(rpcUrlOverrides == null
+      ...(rpcURLOverrides == null
         ? {}
-        : { rpc_url_overrides: rpcUrlOverrides }),
+        : { rpc_url_overrides: rpcURLOverrides }),
     },
     ...(config.spending?.confirm_above_usd == null
       ? {}
@@ -821,21 +822,21 @@ export function resolveConfig(config: CorbitsConfig): ResolvedConfig {
     config.payment.network,
   );
   const defaults = getPaymentNetworkDefaults(config.payment.network);
-  const rpcUrl =
+  const rpcURL =
     config.payment.rpc_url_overrides?.[config.payment.network] ??
-    defaults.rpcUrl;
+    defaults.rpcURL;
   return {
     version: config.version,
     preferences: {
       format: config.preferences.format,
-      apiUrl: config.preferences.api_url,
+      apiURL: config.preferences.api_url,
     },
     payment: {
       network: config.payment.network,
       family: getWalletFamilyForNetwork(config.payment.network),
       address: activeWallet.address,
       asset: defaults.asset,
-      rpcUrl,
+      rpcURL,
     },
     spending: {
       ...(config.spending?.confirm_above_usd == null

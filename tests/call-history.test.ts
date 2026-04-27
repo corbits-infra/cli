@@ -15,14 +15,14 @@ const resolvedConfig = {
   version: 1,
   preferences: {
     format: "table",
-    apiUrl: "https://api.corbits.dev",
+    apiURL: "https://api.corbits.dev",
   },
   payment: {
     network: "devnet",
     family: "solana",
     address: "So11111111111111111111111111111111111111112",
     asset: "USDC",
-    rpcUrl: "https://api.devnet.solana.com",
+    rpcURL: "https://api.devnet.solana.com",
   },
   spending: {},
   activeWallet: {

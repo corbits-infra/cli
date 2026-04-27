@@ -11,7 +11,7 @@ export function writeStderrLine(s: string): void {
   process.stderr.write(s + "\n");
 }
 
-export function printJson(data: unknown): void {
+export function printJSON(data: unknown): void {
   writeLine(JSON.stringify(data, null, 2));
 }
 
@@ -64,7 +64,7 @@ export function formatDisplayTokenAmount(args: {
     : formatTokenAmount(args.amount, decimals);
 }
 
-export function tryParseJson(text: string): unknown {
+export function tryParseJSON(text: string): unknown {
   if (text.trim().length === 0) {
     return undefined;
   }
@@ -83,7 +83,7 @@ export function printFormatted<T>(
   toRow: (item: T) => string[],
 ): void {
   if (format === "json") {
-    printJson(data);
+    printJSON(data);
     return;
   }
   if (format === "yaml") {

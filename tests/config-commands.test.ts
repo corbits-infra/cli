@@ -18,7 +18,7 @@ async function seedConfig(options?: {
   await captureStdout(() =>
     configInit.handler({
       network: "mainnet-beta",
-      rpcUrl: undefined,
+      rpcURL: undefined,
       solanaAddress: "7xKX...",
       solanaPath: "~/.config/corbits/keys/solana.json",
       solanaOws: undefined,
@@ -26,7 +26,7 @@ async function seedConfig(options?: {
       evmPath: undefined,
       evmOws: options?.includeEvmWallet === false ? undefined : "primary-evm",
       format: "table",
-      apiUrl: "https://api.corbits.dev",
+      apiURL: "https://api.corbits.dev",
       confirmAboveUsd: undefined,
       config: undefined,
     }),
@@ -42,10 +42,10 @@ await t.test("config commands", async (t) => {
     t.equal("configSetNetwork" in configCommands, false);
     t.equal("configSetAddress" in configCommands, false);
     t.equal("configSetAsset" in configCommands, false);
-    t.equal("configSetRpcUrl" in configCommands, false);
+    t.equal("configSetRPCURL" in configCommands, false);
     t.equal("configSetWallet" in configCommands, false);
     t.equal("configSetFormat" in configCommands, false);
-    t.equal("configSetApiUrl" in configCommands, false);
+    t.equal("configSetAPIURL" in configCommands, false);
     t.end();
   });
 
@@ -56,7 +56,7 @@ await t.test("config commands", async (t) => {
       const output = await captureStdout(() =>
         configInit.handler({
           network: "mainnet-beta",
-          rpcUrl: undefined,
+          rpcURL: undefined,
           solanaAddress: "7xKX...",
           solanaPath: "~/.config/corbits/keys/solana.json",
           solanaOws: undefined,
@@ -64,7 +64,7 @@ await t.test("config commands", async (t) => {
           evmPath: undefined,
           evmOws: undefined,
           format: "table",
-          apiUrl: "https://api.corbits.dev",
+          apiURL: "https://api.corbits.dev",
           confirmAboveUsd: undefined,
           config: undefined,
         }),
@@ -91,7 +91,7 @@ await t.test("config commands", async (t) => {
 
       await configInit.handler({
         network: "base-sepolia",
-        rpcUrl: "https://base-sepolia.example",
+        rpcURL: "https://base-sepolia.example",
         solanaAddress: undefined,
         solanaPath: undefined,
         solanaOws: undefined,
@@ -99,7 +99,7 @@ await t.test("config commands", async (t) => {
         evmPath: undefined,
         evmOws: "primary-evm",
         format: undefined,
-        apiUrl: undefined,
+        apiURL: undefined,
         confirmAboveUsd: undefined,
         config: undefined,
       });
@@ -121,7 +121,7 @@ await t.test("config commands", async (t) => {
       const output = await captureStdout(() =>
         configInit.handler({
           network: "devnet",
-          rpcUrl: undefined,
+          rpcURL: undefined,
           solanaAddress: "8yZZ...",
           solanaPath: "~/.config/corbits/keys/devnet.json",
           solanaOws: undefined,
@@ -129,7 +129,7 @@ await t.test("config commands", async (t) => {
           evmPath: undefined,
           evmOws: undefined,
           format: undefined,
-          apiUrl: undefined,
+          apiURL: undefined,
           confirmAboveUsd: undefined,
           config: undefined,
         }),
@@ -150,7 +150,7 @@ await t.test("config commands", async (t) => {
         const output = await captureStdout(() =>
           configInit.handler({
             network: "devnet",
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: "8yZZ...",
             solanaPath: "~/.config/corbits/keys/devnet.json",
             solanaOws: undefined,
@@ -158,7 +158,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: "json",
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -181,7 +181,7 @@ await t.test("config commands", async (t) => {
         () =>
           configInit.handler({
             network: "mainnet-beta",
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: "7xKX...",
             solanaPath: "~/.config/corbits/keys/solana.json",
             solanaOws: "primary-solana",
@@ -189,7 +189,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -207,7 +207,7 @@ await t.test("config commands", async (t) => {
           () =>
             configInit.handler({
               network: "mainnet-beta",
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: undefined,
               solanaPath: "~/.config/corbits/keys/solana.json",
               solanaOws: undefined,
@@ -215,7 +215,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -234,7 +234,7 @@ await t.test("config commands", async (t) => {
           () =>
             configInit.handler({
               network: "devnet",
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
               solanaOws: undefined,
@@ -242,7 +242,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: "primary-evm",
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -261,7 +261,7 @@ await t.test("config commands", async (t) => {
           () =>
             configInit.handler({
               network: "base-sepolia",
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: "7xKX...",
               solanaPath: "~/.config/corbits/keys/solana.json",
               solanaOws: undefined,
@@ -269,7 +269,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -290,7 +290,7 @@ await t.test("config commands", async (t) => {
         const output = await captureStdout(() =>
           configSet.handler({
             network: "base",
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -298,7 +298,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -327,7 +327,7 @@ await t.test("config commands", async (t) => {
         await captureStdout(() =>
           configSet.handler({
             network: undefined,
-            rpcUrl: "https://mainnet-beta.example",
+            rpcURL: "https://mainnet-beta.example",
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -335,7 +335,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -344,7 +344,7 @@ await t.test("config commands", async (t) => {
         await captureStdout(() =>
           configSet.handler({
             network: "base",
-            rpcUrl: "https://base.example",
+            rpcURL: "https://base.example",
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -352,7 +352,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -397,7 +397,7 @@ await t.test("config commands", async (t) => {
         await captureStdout(() =>
           configSet.handler({
             network: undefined,
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: "So1111...",
             solanaPath: undefined,
             solanaOws: "primary-solana",
@@ -405,7 +405,7 @@ await t.test("config commands", async (t) => {
             evmPath: "~/.config/corbits/keys/base.key",
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -442,7 +442,7 @@ await t.test("config commands", async (t) => {
         const output = await captureStdout(() =>
           configSet.handler({
             network: undefined,
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -450,7 +450,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: "yaml",
-            apiUrl: "https://staging.corbits.dev",
+            apiURL: "https://staging.corbits.dev",
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -476,7 +476,7 @@ await t.test("config commands", async (t) => {
         const output = await captureStdout(() =>
           configSet.handler({
             network: undefined,
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -484,7 +484,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: "0.25",
             config: undefined,
           }),
@@ -526,7 +526,7 @@ await t.test("config commands", async (t) => {
         const output = await captureStdout(() =>
           configSet.handler({
             network: "base",
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -534,7 +534,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: "yaml",
-            apiUrl: "https://staging.corbits.dev",
+            apiURL: "https://staging.corbits.dev",
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -568,7 +568,7 @@ await t.test("config commands", async (t) => {
         const error = await t.rejects(() =>
           configSet.handler({
             network: "base",
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -576,7 +576,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -600,7 +600,7 @@ await t.test("config commands", async (t) => {
         () =>
           configSet.handler({
             network: undefined,
-            rpcUrl: undefined,
+            rpcURL: undefined,
             solanaAddress: undefined,
             solanaPath: undefined,
             solanaOws: undefined,
@@ -608,7 +608,7 @@ await t.test("config commands", async (t) => {
             evmPath: undefined,
             evmOws: undefined,
             format: undefined,
-            apiUrl: undefined,
+            apiURL: undefined,
             confirmAboveUsd: undefined,
             config: undefined,
           }),
@@ -628,7 +628,7 @@ await t.test("config commands", async (t) => {
           () =>
             configSet.handler({
               network: "polygon-mainnet",
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
               solanaOws: undefined,
@@ -636,7 +636,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -647,7 +647,7 @@ await t.test("config commands", async (t) => {
           () =>
             configSet.handler({
               network: "base",
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
               solanaOws: undefined,
@@ -655,7 +655,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -666,7 +666,7 @@ await t.test("config commands", async (t) => {
           () =>
             configSet.handler({
               network: undefined,
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: undefined,
               solanaPath: undefined,
               solanaOws: undefined,
@@ -674,7 +674,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: "not-a-url",
+              apiURL: "not-a-url",
               confirmAboveUsd: undefined,
               config: undefined,
             }),
@@ -685,7 +685,7 @@ await t.test("config commands", async (t) => {
           () =>
             configSet.handler({
               network: undefined,
-              rpcUrl: undefined,
+              rpcURL: undefined,
               solanaAddress: "7xKX...",
               solanaPath: "~/.config/corbits/keys/solana.json",
               solanaOws: "primary-solana",
@@ -693,7 +693,7 @@ await t.test("config commands", async (t) => {
               evmPath: undefined,
               evmOws: undefined,
               format: undefined,
-              apiUrl: undefined,
+              apiURL: undefined,
               confirmAboveUsd: undefined,
               config: undefined,
             }),

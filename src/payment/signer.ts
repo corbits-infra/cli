@@ -1,10 +1,12 @@
-import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { normalizeNetworkId, translateNetworkToLegacy } from "@faremeter/info";
 import {
+  isKnownAsset,
   lookupKnownAsset,
   lookupX402Network,
-  type KnownAsset,
 } from "@faremeter/info/evm";
 import { clusterToCAIP2, lookupKnownSPLToken } from "@faremeter/info/solana";
 import { exact as evmExact } from "@faremeter/payment-evm";
@@ -31,17 +33,16 @@ import {
 } from "@faremeter/types/x402v2";
 import { createLocalWallet as createEvmLocalWallet } from "@faremeter/wallet-evm";
 import { createLocalWallet as createSolanaLocalWallet } from "@faremeter/wallet-solana";
-import { Keypair, Connection, PublicKey } from "@solana/web3.js";
+
 import { ConfigError } from "../config/index.js";
 import type { ResolvedConfig } from "../config/index.js";
+import type { RetryHeader } from "../process/wrapped-client.js";
 import { buildOwsPaymentHandler } from "./ows.js";
 import { getEvmChainInfo, getSolanaCluster } from "./networks.js";
 import {
   getPaymentRequirementDetails,
   type PaymentRequirementDetails,
 } from "./requirements.js";
-
-import type { RetryHeader } from "../process/wrapped-client.js";
 export type { RetryHeader } from "../process/wrapped-client.js";
 
 export type PaymentHandlerInfo = {
@@ -88,7 +89,7 @@ type BuildPaymentHandlerDeps = {
   createEvmLocalWallet: typeof createEvmLocalWallet;
   createSolanaPaymentHandler: typeof solanaExact.createPaymentHandler;
   createEvmPaymentHandler: typeof evmExact.createPaymentHandler;
-  createConnection: (rpcUrl: string) => Connection;
+  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -188,7 +189,12 @@ function resolveEvmPaymentInfo(
     );
   }
 
-  const assetSymbol = (requirement?.symbol ?? "USDC") as KnownAsset;
+  const assetSymbol = requirement?.symbol ?? "USDC";
+  if (!isKnownAsset(assetSymbol)) {
+    throw new ConfigError(
+      `No known ${assetSymbol} asset for EVM network ${config.payment.network}`,
+    );
+  }
   const assetInfo = deps.lookupKnownAsset(chainInfo.id, assetSymbol);
   if (assetInfo == null) {
     throw new ConfigError(
@@ -263,7 +269,7 @@ async function buildSolanaKeypairHandler(
     paymentInfo.cluster,
     keypair,
   );
-  const connection = deps.createConnection(config.payment.rpcUrl);
+  const connection = deps.createConnection(config.payment.rpcURL);
 
   return {
     handler: deps.createSolanaPaymentHandler(
@@ -301,9 +307,9 @@ async function buildEvmKeypairHandler(
 }
 
 function parsePaymentRequiredBody(text: string) {
-  let parsedJson: unknown;
+  let parsedJSON: unknown;
   try {
-    parsedJson = JSON.parse(text);
+    parsedJSON = JSON.parse(text);
   } catch (cause) {
     throw new Error("failed to parse x402 payment challenge body as JSON", {
       cause,
@@ -311,7 +317,7 @@ function parsePaymentRequiredBody(text: string) {
   }
 
   const normalized = normalizePaymentRequiredResponse(
-    x402PaymentRequiredResponseLenient.assert(parsedJson),
+    x402PaymentRequiredResponseLenient.assert(parsedJSON),
   );
   return normalized;
 }
@@ -324,9 +330,9 @@ function parseDecodedPaymentRequiredValue(
   decoded: string,
   url: string,
 ): ParsedPaymentRequiredResponse {
-  let parsedJson: unknown;
+  let parsedJSON: unknown;
   try {
-    parsedJson = JSON.parse(decoded);
+    parsedJSON = JSON.parse(decoded);
   } catch (cause) {
     throw new Error("failed to parse x402 payment challenge header as JSON", {
       cause,
@@ -334,7 +340,7 @@ function parseDecodedPaymentRequiredValue(
   }
 
   try {
-    const parsed = x402PaymentRequiredResponseV2.assert(parsedJson);
+    const parsed = x402PaymentRequiredResponseV2.assert(parsedJSON);
     return {
       detectedVersion: 2,
       accepts: parsed.accepts,
@@ -347,7 +353,7 @@ function parseDecodedPaymentRequiredValue(
 
   try {
     const normalized = normalizePaymentRequiredResponse(
-      x402PaymentRequiredResponseLenient.assert(parsedJson),
+      x402PaymentRequiredResponseLenient.assert(parsedJSON),
     );
     const adapted = adaptPaymentRequiredResponseV1ToV2(
       normalized,
@@ -670,15 +676,15 @@ export function formatPaymentRequirementMismatch(
   return `server did not provide a supported x402 payment requirement for active payment network ${config.payment.network}; offered networks: ${acceptedNetworks.join(", ")}`;
 }
 
-function parseJsonText(value: string): unknown {
+function parseJSONText(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
 function parsePaymentResponseHeaderValue(value: string): unknown {
   try {
-    return parseJsonText(value);
+    return parseJSONText(value);
   } catch {
-    return parseJsonText(Buffer.from(value, "base64").toString("utf8"));
+    return parseJSONText(Buffer.from(value, "base64").toString("utf8"));
   }
 }
 
@@ -863,7 +869,7 @@ export const buildPaymentHandler = createBuildPaymentHandler({
   createEvmLocalWallet,
   createSolanaPaymentHandler: solanaExact.createPaymentHandler,
   createEvmPaymentHandler: evmExact.createPaymentHandler,
-  createConnection: (rpcUrl) => new Connection(rpcUrl, "confirmed"),
+  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,

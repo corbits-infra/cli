@@ -2,7 +2,7 @@ import type { x402PaymentRequirements as x402PaymentRequirementsV2 } from "@fare
 import {
   formatDisplayTokenAmount,
   printFormatted,
-  printJson,
+  printJSON,
   printTable,
   printYaml,
   writeLine,
@@ -153,7 +153,7 @@ export function printPaymentRequirementInspection(
   inspection: PaymentRequirementInspection,
 ): void {
   if (format === "json") {
-    printJson(inspection);
+    printJSON(inspection);
     return;
   }
 

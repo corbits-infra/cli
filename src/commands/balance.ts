@@ -7,7 +7,7 @@ import {
   formatPaymentNetworkDisplay,
 } from "../config/schema.js";
 import { ConfigError } from "../config/index.js";
-import { printFormatted, printJson, printYaml } from "../output/format.js";
+import { printFormatted, printJSON, printYaml } from "../output/format.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 import {
   buildTargetFromOverrides,
@@ -52,11 +52,11 @@ async function resolveTarget(
         `--network ${formatPaymentNetworkDisplay(network)} requires a ${networkFamily} wallet address; use --address to specify one`,
       );
     }
-    const rpcUrl =
+    const rpcURL =
       config.payment.rpc_url_overrides?.[network] ??
-      getPaymentNetworkDefaults(network).rpcUrl;
+      getPaymentNetworkDefaults(network).rpcURL;
     return {
-      target: { network, address: resolved.payment.address, rpcUrl },
+      target: { network, address: resolved.payment.address, rpcURL },
       defaultAsset: getPaymentNetworkDefaults(network).asset,
     };
   }
@@ -65,7 +65,7 @@ async function resolveTarget(
     target: {
       network: resolved.payment.network,
       address: resolved.payment.address,
-      rpcUrl: resolved.payment.rpcUrl,
+      rpcURL: resolved.payment.rpcURL,
     },
     defaultAsset: resolved.payment.asset,
   };
@@ -113,7 +113,7 @@ export function createBalanceCommand(deps: BalanceCommandDeps) {
       );
 
       if (format === "json") {
-        printJson(record);
+        printJSON(record);
         return;
       }
       if (format === "yaml") {

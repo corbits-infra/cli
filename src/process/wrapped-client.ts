@@ -9,14 +9,13 @@ import {
   sanitizeCurlCaptureArgs,
   sanitizeCurlHeaderArgs,
 } from "./curl.js";
-import { runWget } from "./wget.js";
-import { parseVerificationFailure } from "./types.js";
 import {
-  extractFirstUrl,
+  extractFirstURL,
   parseWrappedRequestHeaders,
   parseWrappedRequestInfo,
 } from "./request-info.js";
 import {
+  parseVerificationFailure,
   WRAPPED_CLIENTS,
   type RunWrappedClientArgs,
   type WrappedClient,
@@ -26,13 +25,14 @@ import {
   hasWgetContentOnErrorFlag,
   hasWgetServerResponseFlag,
   parseWgetHeaders,
+  runWget,
   stripWgetServerResponse,
 } from "./wget.js";
 
 const execFileAsync = promisify(execFile);
 
 function isWrappedClient(value: string): value is WrappedClient {
-  return WRAPPED_CLIENTS.includes(value as WrappedClient);
+  return WRAPPED_CLIENTS.some((client) => client === value);
 }
 
 function normalizeWrappedTool(tool: string): WrappedClient {
@@ -91,7 +91,7 @@ export const runWrappedClient = createRunWrappedClient({
 });
 
 export const testExports = {
-  extractFirstUrl,
+  extractFirstURL,
   hasCurlIncludeHeadersFlag,
   hasCurlNextFlag,
   hasWgetContentOnErrorFlag,
