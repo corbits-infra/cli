@@ -36,6 +36,14 @@ export function hasCurlIncludeHeadersFlag(args: string[]): boolean {
   return args.some((arg) => arg === "-i" || arg === "--include");
 }
 
+function hasCurlShortFailFlag(arg: string): boolean {
+  return /^-[sS]*f[sS]*$/.test(arg);
+}
+
+export function hasCurlFailFlag(args: string[]): boolean {
+  return args.some((arg) => arg === "--fail" || hasCurlShortFailFlag(arg));
+}
+
 export function hasCurlNextFlag(args: string[]): boolean {
   return args.some((arg) => arg === "--next");
 }
@@ -287,6 +295,11 @@ export async function runCurl(
   if (hasCurlIncludeHeadersFlag(args)) {
     throw new Error(
       'curl flag "-i/--include" is not supported; headers are captured internally for x402 handling',
+    );
+  }
+  if (hasCurlFailFlag(args)) {
+    throw new Error(
+      'curl flag "-f/--fail" is not supported; it hides the 402 challenge body required for x402 payment handling',
     );
   }
   if (hasCurlNextFlag(args)) {

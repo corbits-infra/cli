@@ -440,6 +440,21 @@ await t.test("call wrapper helpers", async (t) => {
     );
   });
 
+  await t.test("detects incompatible curl fail flags", async (t) => {
+    t.equal(testExports.hasCurlFailFlag(["-f"]), true);
+    t.equal(testExports.hasCurlFailFlag(["--fail"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-fsS"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-sSf"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-dfoo=bar"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-ufoo:bar"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-Afirefox"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-XPOST"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-ofoo.json"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-Dheaders.txt"]), false);
+    t.equal(testExports.hasCurlFailFlag(["--fail-with-body"]), false);
+    t.equal(testExports.hasCurlFailFlag(["https://example.com"]), false);
+  });
+
   await t.test(
     "detects curl multi-transfer and wget response flags",
     async (t) => {
@@ -598,6 +613,19 @@ await t.test("wrapped client runner", async (t) => {
         args: ["-i", "https://example.com"],
       }),
       /-i\/--include/,
+    );
+  });
+
+  await t.test("rejects curl fail passthrough flags", async (t) => {
+    const tempDir = t.testdir();
+    const runWrappedClient = createRunWrappedClient(createWrapperDeps(tempDir));
+
+    await t.rejects(
+      runWrappedClient({
+        tool: "curl",
+        args: ["-fsS", "https://example.com"],
+      }),
+      /-f\/--fail.*402 challenge body/,
     );
   });
 

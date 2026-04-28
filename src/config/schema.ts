@@ -13,7 +13,6 @@ import {
 const PAYMENT_NETWORKS = [
   "devnet",
   "mainnet-beta",
-  "localnet",
   "base",
   "base-sepolia",
 ] as const;
@@ -22,7 +21,6 @@ const PaymentNetworkSchema = type.enumerated(...PAYMENT_NETWORKS);
 const PAYMENT_NETWORK_DISPLAY_NAMES: Record<PaymentNetwork, string> = {
   devnet: "solana-devnet",
   "mainnet-beta": "solana-mainnet-beta",
-  localnet: "solana-localnet",
   base: "base",
   "base-sepolia": "base-sepolia",
 };
@@ -171,7 +169,6 @@ export const DEFAULT_API_URL = "https://api.corbits.dev";
 const DEFAULT_RPC_URLS: Record<PaymentNetwork, string> = {
   devnet: "https://api.devnet.solana.com",
   "mainnet-beta": "https://api.mainnet-beta.solana.com",
-  localnet: "http://127.0.0.1:8899",
   base: "https://mainnet.base.org",
   "base-sepolia": "https://sepolia.base.org",
 };
@@ -209,7 +206,7 @@ export function getPaymentNetworkContext(network: PaymentNetwork): {
   family: WalletFamily;
   displayName: string;
 } {
-  if (network === "localnet" || solana.isKnownCluster(network)) {
+  if (solana.isKnownCluster(network)) {
     return {
       family: "solana",
       displayName: PAYMENT_NETWORK_DISPLAY_NAMES[network],
@@ -234,7 +231,6 @@ function normalizeToPaymentNetwork(input: string): PaymentNetwork | null {
   // Solana shorthand: "solana" → mainnet-beta
   if (input === "solana" || input === "solana-mainnet") return "mainnet-beta";
   if (input === "solana-devnet") return "devnet";
-  if (input === "solana-localnet") return "localnet";
   // Try CAIP-2 normalization for EVM networks
   const caip2 = normalizeNetworkId(input);
   const legacy = translateNetworkToLegacy(caip2);

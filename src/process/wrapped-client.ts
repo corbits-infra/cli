@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { promisify } from "node:util";
 import {
+  hasCurlFailFlag,
   hasCurlIncludeHeadersFlag,
   hasCurlNextFlag,
   parseCurlHeaders,
@@ -92,6 +93,7 @@ export const runWrappedClient = createRunWrappedClient({
 
 export const testExports = {
   extractFirstURL,
+  hasCurlFailFlag,
   hasCurlIncludeHeadersFlag,
   hasCurlNextFlag,
   hasWgetContentOnErrorFlag,

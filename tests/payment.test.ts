@@ -1045,47 +1045,6 @@ await t.test("payment signer", async (t) => {
     );
   });
 
-  await t.test("rejects unsupported signer networks", async (t) => {
-    const buildPaymentHandler = createBuildPaymentHandler({
-      readTextFile: async () => "[]",
-      buildOwsPaymentHandler: async () => {
-        throw new Error("should not build OWS handler");
-      },
-      createSolanaLocalWallet: async () => {
-        throw new Error("should not build a Solana wallet");
-      },
-      createEvmLocalWallet: async () => {
-        throw new Error("should not build an EVM wallet");
-      },
-      createSolanaPaymentHandler: (() => {
-        throw new Error("should not build a Solana payment handler");
-      }) as never,
-      createEvmPaymentHandler: (() => {
-        throw new Error("should not build an EVM payment handler");
-      }) as never,
-      createConnection: () => {
-        throw new Error("should not create a connection");
-      },
-      lookupKnownSPLToken: (() => undefined) as never,
-      clusterToCAIP2: (() => ({ caip2: "" })) as never,
-      lookupKnownAsset: (() => undefined) as never,
-      lookupX402Network: (() => "") as never,
-    });
-
-    const config = {
-      ...createSolanaKeypairConfig(),
-      payment: {
-        ...createSolanaKeypairConfig().payment,
-        network: "localnet" as const,
-      },
-    };
-
-    await t.rejects(
-      () => buildPaymentHandler(config),
-      /do not support network localnet/,
-    );
-  });
-
   await t.test("uses the expanded Solana keypair path", async (t) => {
     const keypair = Keypair.generate();
     let readPath: string | undefined;

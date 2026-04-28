@@ -117,19 +117,16 @@ Supported payment networks:
 
 - `devnet` displayed as `solana-devnet`.
 - `mainnet-beta` displayed as `solana-mainnet-beta`.
-- `localnet` displayed as `solana-localnet`.
 - `base`.
 - `base-sepolia`.
 
 Recognized aliases include `solana`, `solana-mainnet`, `solana-devnet`,
-`solana-localnet`, and CAIP-2 values that translate to supported legacy network
-names.
+and CAIP-2 values that translate to supported legacy network names.
 
 Default RPC URLs:
 
 - `devnet`: `https://api.devnet.solana.com`
 - `mainnet-beta`: `https://api.mainnet-beta.solana.com`
-- `localnet`: `http://127.0.0.1:8899`
 - `base`: `https://mainnet.base.org`
 - `base-sepolia`: `https://sepolia.base.org`
 
