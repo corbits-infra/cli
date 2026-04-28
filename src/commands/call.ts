@@ -21,7 +21,9 @@ import {
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
+  formatJSON,
   formatDisplayTokenAmount,
+  formatYaml,
   type OutputFormat,
 } from "../output/format.js";
 import {
@@ -76,6 +78,19 @@ type ResponseStatusMetadata = {
   status: number | null;
 };
 
+type PaymentInfoOutput = {
+  payment: {
+    amount: string;
+    asset: string;
+    network: string;
+    decimals?: number;
+    txSignature?: string;
+  };
+  response?: {
+    status: number | null;
+  };
+};
+
 type ConfirmPaymentArgs = {
   thresholdUsd: string;
   amountUsd: string;
@@ -84,7 +99,21 @@ type ConfirmPaymentArgs = {
   networkDisplay: string;
 };
 
-const SPENDING_LIMIT_UNSUPPORTED_SYMBOLS = new Set(["EURC"]);
+const USD_NORMALIZATION_STABLECOIN_SYMBOLS = new Set([
+  "USDC",
+  "PYUSD",
+  "USDT",
+  "USDG",
+  "USD1",
+  "USX",
+  "CASH",
+  "JupUSD",
+  "USDS",
+  "USDtb",
+  "USDu",
+  "USDGO",
+  "FDUSD",
+]);
 
 function formatResponseStatus(status: number | null): string {
   return status == null ? "unknown" : `HTTP ${status}`;
@@ -94,7 +123,7 @@ function isSupportedUsdNormalizationAsset(args: {
   network: string;
   symbol: string;
 }): boolean {
-  if (SPENDING_LIMIT_UNSUPPORTED_SYMBOLS.has(args.symbol)) {
+  if (!USD_NORMALIZATION_STABLECOIN_SYMBOLS.has(args.symbol)) {
     return false;
   }
 
@@ -275,6 +304,56 @@ function formatPaymentSummary(args: {
   return parts.join(", ");
 }
 
+function formatPaymentInfoOutput(args: {
+  paymentInfo: PaymentMetadata;
+  responseStatus?: ResponseStatusMetadata;
+}): PaymentInfoOutput {
+  const { paymentInfo, responseStatus } = args;
+  const assetDisplay = paymentInfo.assetSymbol ?? paymentInfo.asset;
+  return {
+    payment: {
+      amount: formatDisplayTokenAmount({
+        amount: paymentInfo.amount,
+        asset: assetDisplay,
+        ...(paymentInfo.decimals == null
+          ? {}
+          : { decimals: paymentInfo.decimals }),
+      }),
+      asset: assetDisplay,
+      network: paymentInfo.network,
+      ...(paymentInfo.decimals == null
+        ? {}
+        : { decimals: paymentInfo.decimals }),
+      ...(paymentInfo.txSignature == null
+        ? {}
+        : { txSignature: paymentInfo.txSignature }),
+    },
+    ...(responseStatus == null
+      ? {}
+      : {
+          response: {
+            status: responseStatus.status,
+          },
+        }),
+  };
+}
+
+function formatPaymentInfo(args: {
+  format: OutputFormat;
+  paymentInfo: PaymentMetadata;
+  responseStatus?: ResponseStatusMetadata;
+}): string {
+  if (args.format === "json") {
+    return formatJSON(formatPaymentInfoOutput(args));
+  }
+
+  if (args.format === "yaml") {
+    return formatYaml(formatPaymentInfoOutput(args)).trimEnd();
+  }
+
+  return formatPaymentSummary(args);
+}
+
 function writeOutcomeOutput(
   outcome: Extract<
     WrappedRunResult,
@@ -282,6 +361,7 @@ function writeOutcomeOutput(
   >,
   paymentInfo?: PaymentMetadata,
   responseStatus?: ResponseStatusMetadata,
+  paymentInfoFormat: OutputFormat = "table",
 ) {
   const completedStderr =
     outcome.kind === "completed" ? outcome.stderr : undefined;
@@ -295,7 +375,8 @@ function writeOutcomeOutput(
     process.stdout.write(outcome.stdout);
   }
   if (paymentInfo != null) {
-    const summary = formatPaymentSummary({
+    const summary = formatPaymentInfo({
+      format: paymentInfoFormat,
       paymentInfo,
       ...(responseStatus == null ? {} : { responseStatus }),
     });
@@ -406,6 +487,7 @@ async function handle402Retry(args: {
   tool: WrappedClient;
   clientArgs: string[];
   printPaymentInfo: boolean;
+  paymentInfoFormat: OutputFormat;
   saveResponse: boolean;
   firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
 }): Promise<void> {
@@ -449,7 +531,12 @@ async function handle402Retry(args: {
     const responseStatus = args.printPaymentInfo
       ? { status: retry.status }
       : undefined;
-    writeOutcomeOutput(retry, paidCallInfo, responseStatus);
+    writeOutcomeOutput(
+      retry,
+      paidCallInfo,
+      responseStatus,
+      args.paymentInfoFormat,
+    );
 
     const responseBody =
       args.saveResponse && retry.kind === "completed"
@@ -538,13 +625,6 @@ async function maybeConfirmPayment(args: {
   if (selection.kind !== "selected") {
     write402Error(formatPaymentRequirementMismatch(args.config, selection));
     return false;
-  }
-
-  if (
-    selection.selected.symbol != null &&
-    SPENDING_LIMIT_UNSUPPORTED_SYMBOLS.has(selection.selected.symbol)
-  ) {
-    return true;
   }
 
   let normalizedPayment;
@@ -740,6 +820,9 @@ export function createCallCommand(deps: CallDeps) {
         tool: result.tool,
         clientArgs,
         printPaymentInfo: paymentInfo,
+        paymentInfoFormat: paymentInfo
+          ? await resolveOutputFormat(formatArg)
+          : "table",
         saveResponse,
         firstAttempt: result,
       });

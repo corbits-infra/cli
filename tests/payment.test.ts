@@ -1003,9 +1003,100 @@ await t.test("payment signer", async (t) => {
           method: "GET",
         },
       }),
-      /server only offered EVM x402 payment requirements .* active payment network is devnet/,
+      /server only offered EVM x402 payment requirements .* active payment network is solana-devnet/,
     );
   });
+
+  await t.test(
+    "dedupes and formats offered networks for mixed network mismatches",
+    async (t) => {
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          handler: async () => [],
+        }),
+      });
+
+      await t.rejects(
+        buildPaymentRetryHeader({
+          config: createSolanaKeypairConfig(),
+          response: new Response(
+            JSON.stringify({
+              x402Version: 1,
+              accepts: [
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                },
+                {
+                  scheme: "exact",
+                  network: "solana-mainnet-beta",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                },
+                {
+                  scheme: "exact",
+                  network: "eip155:8453",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "0x833589fCD6eDb6E08F4c7C32D4f71b54bDA02913",
+                },
+                {
+                  scheme: "exact",
+                  network: "eip155:137",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+                },
+                {
+                  scheme: "exact",
+                  network: "eip155:137",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+                },
+                {
+                  scheme: "exact",
+                  network: "eip155:143",
+                  maxAmountRequired: "1000",
+                  resource: "https://example.com",
+                  description: "pay",
+                  payTo: "receiver",
+                  maxTimeoutSeconds: 60,
+                  asset: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603",
+                },
+              ],
+            }),
+            { status: 402, statusText: "Payment Required" },
+          ),
+          url: "https://example.com",
+          requestInit: {
+            method: "GET",
+          },
+        }),
+        /active payment network solana-devnet; offered networks: solana-mainnet-beta, base, polygon, monad/,
+      );
+    },
+  );
 
   await t.test("reports when an endpoint is Solana-only", async (t) => {
     const buildPaymentRetryHeader = createBuildPaymentRetryHeader({

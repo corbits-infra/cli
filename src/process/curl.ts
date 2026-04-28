@@ -335,6 +335,9 @@ export async function runCurl(
       stderrPath,
       mirrorStdout: plan.mirrorStdout,
       mirrorStderr: streamOutput,
+      ...(deps.commandTimeoutMs == null
+        ? {}
+        : { timeoutMs: deps.commandTimeoutMs }),
     });
     const headersRaw = await deps
       .readTextFile(headerPath, "utf8")

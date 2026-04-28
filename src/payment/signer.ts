@@ -36,10 +36,12 @@ import { createLocalWallet as createSolanaLocalWallet } from "@faremeter/wallet-
 
 import { ConfigError } from "../config/index.js";
 import type { ResolvedConfig } from "../config/index.js";
+import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import type { RetryHeader } from "../process/wrapped-client.js";
 import { buildOwsPaymentHandler } from "./ows.js";
 import { getEvmChainInfo, getSolanaCluster } from "./networks.js";
 import {
+  formatPaymentOptionNetwork,
   getPaymentRequirementDetails,
   type PaymentRequirementDetails,
 } from "./requirements.js";
@@ -525,6 +527,24 @@ function formatAcceptedAssetOptions(
     .join(", ");
 }
 
+function formatAcceptedNetworkOptions(
+  options: PaymentRequirementDetails[],
+): string {
+  const seen = new Set<string>();
+  const networks: string[] = [];
+
+  for (const option of options) {
+    const display = formatPaymentOptionNetwork(option.network);
+    if (seen.has(display)) {
+      continue;
+    }
+    seen.add(display);
+    networks.push(display);
+  }
+
+  return networks.join(", ");
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(",")}]`;
@@ -650,9 +670,10 @@ export function formatPaymentRequirementMismatch(
     return `asset ${selection.requestedAsset} is ambiguous on active payment network ${config.payment.network}; matching requirements: ${formatAmbiguousAssetOptions(selection.matches)}`;
   }
 
-  const acceptedNetworks = selection.options.map((option) => option.network);
+  const acceptedNetworks = formatAcceptedNetworkOptions(selection.options);
   const acceptedFamilies = new Set(
-    acceptedNetworks
+    selection.options
+      .map((option) => option.network)
       .map((network) => getRequirementNetworkFamily(network))
       .filter((family) => family != null),
   );
@@ -662,7 +683,7 @@ export function formatPaymentRequirementMismatch(
     acceptedFamilies.has("solana") &&
     config.payment.family !== "solana"
   ) {
-    return `server only offered Solana x402 payment requirements (${acceptedNetworks.join(", ")}), but the active payment network is ${config.payment.network}; switch to a Solana network to call this endpoint`;
+    return `server only offered Solana x402 payment requirements (${acceptedNetworks}), but the active payment network is ${formatPaymentNetworkDisplay(config.payment.network)}; switch to a Solana network to call this endpoint`;
   }
 
   if (
@@ -670,10 +691,10 @@ export function formatPaymentRequirementMismatch(
     acceptedFamilies.has("evm") &&
     config.payment.family !== "evm"
   ) {
-    return `server only offered EVM x402 payment requirements (${acceptedNetworks.join(", ")}), but the active payment network is ${config.payment.network}; switch to an EVM network to call this endpoint`;
+    return `server only offered EVM x402 payment requirements (${acceptedNetworks}), but the active payment network is ${formatPaymentNetworkDisplay(config.payment.network)}; switch to an EVM network to call this endpoint`;
   }
 
-  return `server did not provide a supported x402 payment requirement for active payment network ${config.payment.network}; offered networks: ${acceptedNetworks.join(", ")}`;
+  return `server did not provide a supported x402 payment requirement for active payment network ${formatPaymentNetworkDisplay(config.payment.network)}; offered networks: ${acceptedNetworks}`;
 }
 
 function parseJSONText(value: string): unknown {

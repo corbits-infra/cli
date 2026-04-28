@@ -11,6 +11,7 @@ export async function runCapturedCommand(args: {
   stderrPath: string;
   mirrorStdout?: boolean;
   mirrorStderr?: boolean;
+  timeoutMs?: number;
 }): Promise<CapturedCommandResult> {
   const child = args.spawnCommand(args.tool, args.commandArgs, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -29,8 +30,31 @@ export async function runCapturedCommand(args: {
   }
 
   const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
+    let timeoutError: Error | undefined;
+    const timeout =
+      args.timeoutMs == null
+        ? undefined
+        : setTimeout(() => {
+            timeoutError = new Error(
+              `${args.tool} timed out after ${String(args.timeoutMs)}ms`,
+            );
+            child.kill("SIGTERM");
+          }, args.timeoutMs);
+    const clear = () => {
+      if (timeout != null) {
+        clearTimeout(timeout);
+      }
+    };
+    child.once("error", (cause) => {
+      clear();
+      reject(cause);
+    });
     child.once("close", (code: number | null) => {
+      clear();
+      if (timeoutError != null) {
+        reject(timeoutError);
+        return;
+      }
       resolve(code ?? 1);
     });
   });

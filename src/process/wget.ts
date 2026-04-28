@@ -292,6 +292,9 @@ export async function runWget(
       stderrPath,
       mirrorStdout: plan.mirrorStdout,
       mirrorStderr: plan.mirrorStderr,
+      ...(deps.commandTimeoutMs == null
+        ? {}
+        : { timeoutMs: deps.commandTimeoutMs }),
     });
     const body = await deps
       .readBinaryFile(bodyPath)

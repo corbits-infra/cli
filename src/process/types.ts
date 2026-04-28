@@ -48,6 +48,7 @@ export type WrappedClientDeps = {
     file: string,
     args: string[],
   ) => Promise<{ stdout: Uint8Array; stderr: Uint8Array }>;
+  commandTimeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   spawn?: typeof spawn;
   mkdtemp: (prefix: string) => Promise<string>;

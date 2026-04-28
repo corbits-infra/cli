@@ -11,12 +11,20 @@ export function writeStderrLine(s: string): void {
   process.stderr.write(s + "\n");
 }
 
+export function formatJSON(data: unknown): string {
+  return JSON.stringify(data, null, 2);
+}
+
+export function formatYaml(data: unknown): string {
+  return yamlStringify(data);
+}
+
 export function printJSON(data: unknown): void {
-  writeLine(JSON.stringify(data, null, 2));
+  writeLine(formatJSON(data));
 }
 
 export function printYaml(data: unknown): void {
-  writeLine(yamlStringify(data));
+  writeLine(formatYaml(data));
 }
 
 export function printTable(head: string[], rows: string[][]): void {

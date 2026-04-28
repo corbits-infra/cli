@@ -494,7 +494,7 @@ await t.test("checkPreflightBalance", async (t) => {
             }),
           ]),
         ),
-        /server only offered EVM x402 payment requirements .* active payment network is devnet/,
+        /server only offered EVM x402 payment requirements .* active payment network is solana-devnet/,
       );
     },
   );

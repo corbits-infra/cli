@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import type { ChildProcess } from "node:child_process";
 import t from "tap";
 import { V2_PAYMENT_REQUIRED_HEADER } from "@faremeter/types/x402v2";
 import { createCallCommand } from "../src/commands/call.js";
@@ -138,12 +139,14 @@ function createPaymentRejectedResult(
   };
 }
 
-function createSpawnStub(args: {
-  stdout?: Buffer | string;
-  stderr?: Buffer | string;
-  exitCode?: number;
-  onSpawn?: (file: string, spawnedArgs: string[]) => void;
-}) {
+function createSpawnStub(
+  args: {
+    stdout?: Buffer | string;
+    stderr?: Buffer | string;
+    exitCode?: number;
+    onSpawn?: (file: string, spawnedArgs: string[]) => void;
+  } = {},
+) {
   return ((file: string, spawnedArgs: readonly string[]) => {
     args.onSpawn?.(file, [...spawnedArgs]);
     const child = new EventEmitter() as EventEmitter & {
@@ -173,6 +176,31 @@ function createSpawnStub(args: {
   }) as typeof import("node:child_process").spawn;
 }
 
+function createHangingSpawnStub(args: {
+  onKill?: (signal?: NodeJS.Signals | number) => void;
+}) {
+  return (() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: ChildProcess["kill"];
+    };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = ((signal?: NodeJS.Signals | number) => {
+      args.onKill?.(signal);
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", null, typeof signal === "string" ? signal : null);
+      return true;
+    }) as ChildProcess["kill"];
+
+    return child as unknown as ReturnType<
+      typeof import("node:child_process").spawn
+    >;
+  }) as typeof import("node:child_process").spawn;
+}
+
 function createWrapperDeps(
   tempDir: string,
   args: {
@@ -193,20 +221,27 @@ function createWrapperDeps(
       encoding: BufferEncoding,
     ) => Promise<string>;
     fetch?: typeof globalThis.fetch;
+    commandTimeoutMs?: number;
   } = {},
 ) {
   return {
     execFile:
       args.execFile ??
       (async (file: string, spawnedArgs: string[]) => {
-        if (file !== "which") {
+        if (
+          !["curl", "wget"].includes(file) ||
+          spawnedArgs[0] !== "--version"
+        ) {
           throw new Error(`unexpected execFile call for ${file}`);
         }
         return {
-          stdout: Buffer.from(`/usr/bin/${spawnedArgs[0]}\n`),
+          stdout: Buffer.from(`${file} 1.0.0\n`),
           stderr: Buffer.from(""),
         };
       }),
+    ...(args.commandTimeoutMs == null
+      ? {}
+      : { commandTimeoutMs: args.commandTimeoutMs }),
     mkdtemp: async () => {
       const dir = path.join(
         tempDir,
@@ -512,6 +547,54 @@ await t.test("wrapped client runner", async (t) => {
       runWrappedClient({ tool: "fetch", args: ["https://example.com"] }),
       /unsupported wrapped command "fetch"/,
     );
+  });
+
+  await t.test("checks wrapped executable directly", async (t) => {
+    const tempDir = t.testdir();
+    const probes: { file: string; args: string[] }[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        execFile: async (file, args) => {
+          probes.push({ file, args });
+          return {
+            stdout: Buffer.from(`${file} 1.0.0\n`),
+            stderr: Buffer.from(""),
+          };
+        },
+        spawn: createSpawnStub(),
+      }),
+    );
+
+    await runWrappedClient({
+      tool: "curl",
+      args: ["https://example.com"],
+    });
+
+    t.same(probes, [{ file: "curl", args: ["--version"] }]);
+  });
+
+  await t.test("times out stalled wrapped commands", async (t) => {
+    const tempDir = t.testdir();
+    const kills: (NodeJS.Signals | number | undefined)[] = [];
+    const runWrappedClient = createRunWrappedClient(
+      createWrapperDeps(tempDir, {
+        commandTimeoutMs: 1,
+        spawn: createHangingSpawnStub({
+          onKill: (signal) => {
+            kills.push(signal);
+          },
+        }),
+      }),
+    );
+
+    await t.rejects(
+      runWrappedClient({
+        tool: "curl",
+        args: ["https://example.com"],
+      }),
+      /curl timed out after 1ms/,
+    );
+    t.same(kills, ["SIGTERM"]);
   });
 
   await t.test("injects curl retry headers on second pass", async (t) => {
@@ -1052,7 +1135,7 @@ await t.test("wrapped client runner", async (t) => {
           execFile: async (file, args) => {
             calls.push({ file, args });
             return {
-              stdout: Buffer.from(`/usr/bin/${args[0]}\n`),
+              stdout: Buffer.from(`${file} 1.0.0\n`),
               stderr: Buffer.from(""),
             };
           },
@@ -2125,7 +2208,7 @@ await t.test("call command", async (t) => {
   );
 
   await t.test(
-    "skips spending confirmation for EURC until USD normalization is supported",
+    "fails closed for non-USD assets when spending confirmation is configured",
     async (t) => {
       let confirmCalls = 0;
       let buildPaymentRetryHeaderCalls = 0;
@@ -2196,19 +2279,22 @@ await t.test("call command", async (t) => {
         preflightBalanceDeps: {} as PreflightBalanceDeps,
       });
 
-      await call.handler({
-        inspect: false,
-        paymentInfo: false,
-        saveResponse: false,
-        yes: false,
-        asset: "EURC",
-        format: undefined,
-        tool: "curl",
-        args: ["https://example.com"],
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: false,
+          yes: false,
+          asset: "EURC",
+          format: undefined,
+          tool: "curl",
+          args: ["https://example.com"],
+        });
       });
 
+      t.match(stderr, /could not be normalized to USD safely/);
       t.equal(confirmCalls, 0);
-      t.equal(buildPaymentRetryHeaderCalls, 1);
+      t.equal(buildPaymentRetryHeaderCalls, 0);
     },
   );
 
@@ -2649,6 +2735,221 @@ await t.test("call command", async (t) => {
       );
       t.notMatch(stderr, /response_headers:/);
       t.notMatch(stderr, /payment-response:/);
+    },
+  );
+
+  await t.test(
+    "prints JSON payment metadata to stderr when payment-info format is json",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            decimals: 6,
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            return createCompletedResult({
+              exitCode: 0,
+              stdout: '{"ok":true}',
+              stderr: "",
+              headers: {
+                "payment-response": JSON.stringify({
+                  success: true,
+                  transaction: "sig-123",
+                  network: "solana-mainnet-beta",
+                  payer: "payer",
+                }),
+              },
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      let stderr = "";
+      const stdout = await captureStdout(async () => {
+        stderr = await captureStderr(async () => {
+          await call.handler({
+            inspect: false,
+            paymentInfo: true,
+            saveResponse: false,
+            yes: false,
+            asset: undefined,
+            format: "json",
+            tool: "curl",
+            args: ["https://example.com"],
+          });
+        });
+      });
+
+      t.equal(stdout, '{"ok":true}');
+      t.same(JSON.parse(stderr), {
+        payment: {
+          amount: "0.001000",
+          asset: "USDC",
+          network: "solana-devnet",
+          decimals: 6,
+          txSignature: "sig-123",
+        },
+        response: {
+          status: 200,
+        },
+      });
+    },
+  );
+
+  await t.test(
+    "defaults payment metadata to JSON when NO_DNA is set",
+    async (t) => {
+      const previousNoDna = process.env.NO_DNA;
+      process.env.NO_DNA = "1";
+      t.teardown(() => {
+        if (previousNoDna == null) {
+          delete process.env.NO_DNA;
+          return;
+        }
+        process.env.NO_DNA = previousNoDna;
+      });
+
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            return createStreamedCompletedResult({
+              exitCode: 0,
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: true,
+          saveResponse: false,
+          yes: false,
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["https://example.com"],
+        });
+      });
+
+      t.same(JSON.parse(stderr), {
+        payment: {
+          amount: "0.001000",
+          asset: "USDC",
+          network: "solana-devnet",
+        },
+        response: {
+          status: 200,
+        },
+      });
+    },
+  );
+
+  await t.test(
+    "prints YAML payment metadata to stderr when payment-info format is yaml",
+    async (t) => {
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => ({
+          detectedVersion: 1,
+          header: {
+            name: "X-PAYMENT",
+            value: "paid",
+          },
+          paymentInfo: {
+            amount: "1000",
+            asset: "USDC",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          },
+        }),
+        runWrappedClient: async (args) => {
+          if ("extraHeader" in args) {
+            return createStreamedCompletedResult({
+              exitCode: 0,
+            });
+          }
+
+          return createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: new Response(
+              JSON.stringify({ x402Version: 1, accepts: [] }),
+              { status: 402 },
+            ),
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: true,
+          saveResponse: false,
+          yes: false,
+          asset: undefined,
+          format: "yaml",
+          tool: "curl",
+          args: ["https://example.com"],
+        });
+      });
+
+      t.match(stderr, /payment:\n/);
+      t.match(stderr, / {2}amount: "0.001000"\n/);
+      t.match(stderr, / {2}asset: USDC\n/);
+      t.match(stderr, / {2}network: solana-devnet\n/);
+      t.match(stderr, /response:\n/);
+      t.match(stderr, / {2}status: 200\n/);
     },
   );
 

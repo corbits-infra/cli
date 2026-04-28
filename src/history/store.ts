@@ -8,6 +8,8 @@ import { formatDisplayTokenAmount } from "../output/format.js";
 import type { WrappedClient } from "../process/wrapped-client.js";
 
 const HISTORY_RESPONSE_DIRECTORY = "history-responses";
+const HISTORY_DIRECTORY_MODE = 0o700;
+const HISTORY_FILE_MODE = 0o600;
 
 const HistoryRecordSchema = type({
   "+": "reject",
@@ -116,10 +118,16 @@ export async function appendHistoryRecord(
   args: HistoryAppendArgs = {},
 ): Promise<void> {
   const targetPath = getHistoryPath(args.historyPath);
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.mkdir(path.dirname(targetPath), {
+    recursive: true,
+    mode: HISTORY_DIRECTORY_MODE,
+  });
 
   if (args.responseBody == null) {
-    await fs.appendFile(targetPath, `${JSON.stringify(record)}\n`, "utf8");
+    await fs.appendFile(targetPath, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+      mode: HISTORY_FILE_MODE,
+    });
     return;
   }
 
@@ -139,11 +147,10 @@ export async function appendHistoryRecord(
   }
 
   try {
-    await fs.appendFile(
-      targetPath,
-      `${JSON.stringify(storedRecord)}\n`,
-      "utf8",
-    );
+    await fs.appendFile(targetPath, `${JSON.stringify(storedRecord)}\n`, {
+      encoding: "utf8",
+      mode: HISTORY_FILE_MODE,
+    });
   } catch (cause) {
     await deleteHistoryResponse(responsePath, args.historyPath);
     throw cause;
@@ -254,8 +261,11 @@ async function writeHistoryResponse(
 ): Promise<string> {
   const responsePath = getHistoryResponseRelativePath(recordId);
   const targetPath = resolveHistoryResponsePath(responsePath, historyPath);
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.writeFile(targetPath, responseBody);
+  await fs.mkdir(path.dirname(targetPath), {
+    recursive: true,
+    mode: HISTORY_DIRECTORY_MODE,
+  });
+  await fs.writeFile(targetPath, responseBody, { mode: HISTORY_FILE_MODE });
   return responsePath;
 }
 

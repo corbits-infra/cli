@@ -240,10 +240,12 @@ Top-level options:
 
 - `--inspect`: parse and print x402 payment requirements without paying.
 - `--payment-info`: print paid-call metadata to stderr after successful retry.
+  With `--format json` or `--format yaml`, this metadata is structured while
+  the wrapped response remains on stdout.
 - `--save-response`: persist the successful paid retry body with history.
 - `--yes`: bypass interactive spending confirmation.
 - `--asset`: override the configured preferred payment asset for the call.
-- `--format`: output format for inspection mode.
+- `--format`: output format for inspection mode and `--payment-info` metadata.
 
 Implementation sequence:
 
@@ -350,8 +352,7 @@ EVM matching currently recognizes USDC.
 
 Spending confirmation compares normalized USD-equivalent amounts as decimal
 strings to avoid floating-point rounding. Assets that cannot be normalized
-safely fail before signing. `EURC` is intentionally exempt from the
-USD-threshold check.
+safely, including unsupported non-USD assets, fail before signing.
 
 ## History Implementation
 

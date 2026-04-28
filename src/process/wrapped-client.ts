@@ -31,6 +31,7 @@ import {
 } from "./wget.js";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 
 function isWrappedClient(value: string): value is WrappedClient {
   return WRAPPED_CLIENTS.some((client) => client === value);
@@ -56,7 +57,7 @@ async function checkCommandExists(
   tool: WrappedClient,
 ): Promise<void> {
   try {
-    await execCommand("which", [tool]);
+    await execCommand(tool, ["--version"]);
   } catch {
     throw new Error(`required executable "${tool}" was not found in PATH`);
   }
@@ -81,6 +82,7 @@ export function createRunWrappedClient(deps: WrappedClientDeps) {
 
 export const runWrappedClient = createRunWrappedClient({
   execFile: (file, args) => execFileAsync(file, args, { encoding: "buffer" }),
+  commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
   spawn,
   mkdtemp: fs.mkdtemp,
   readBinaryFile: fs.readFile,

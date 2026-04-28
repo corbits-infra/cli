@@ -45,6 +45,44 @@ await t.test("history store", async (t) => {
   });
 
   await t.test(
+    "writes history files with owner-only permissions",
+    async (t) => {
+      withTempDataHome(t);
+
+      const historyPath = getHistoryPath();
+      const record = createHistoryRecord({
+        tool: "curl",
+        url: "https://example.com/items",
+        responseStatus: 200,
+        amount: "1000",
+        asset: "USDC",
+        network: "solana-devnet",
+        walletAddress: "Wallet-1",
+        walletKind: "keypair",
+      });
+
+      await appendHistoryRecord(record, {
+        responseBody: '{"ok":true}',
+      });
+
+      const historyStat = await fs.stat(historyPath);
+      const responseDir = path.join(
+        path.dirname(historyPath),
+        "history-responses",
+      );
+      const [responseFile] = await fs.readdir(responseDir);
+      t.equal(historyStat.mode & 0o777, 0o600);
+      t.equal((await fs.stat(path.dirname(historyPath))).mode & 0o777, 0o700);
+      t.equal((await fs.stat(responseDir)).mode & 0o777, 0o700);
+      t.equal(
+        (await fs.stat(path.join(responseDir, responseFile ?? ""))).mode &
+          0o777,
+        0o600,
+      );
+    },
+  );
+
+  await t.test(
     "removes the saved response sidecar when metadata persistence fails",
     async (t) => {
       withTempDataHome(t);

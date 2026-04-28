@@ -89,19 +89,32 @@ If `spending.confirm_above_usd` is configured, Corbits inspects the selected
 payment option before signing. When the normalized USD-equivalent amount exceeds
 that threshold, `call` prompts for confirmation on an interactive terminal.
 Use `--yes` to bypass that prompt. Corbits refuses to guess when the selected
-asset cannot be normalized safely to USD and tells you to inspect the challenge
-first instead. `EURC` is not supported by this spending-limit normalization yet,
-so Corbits skips the threshold check for `EURC` payments.
+asset cannot be normalized safely to USD, including unsupported non-USD assets,
+and tells you to inspect the challenge first instead.
 
 When `--payment-info` is set, successful paid retries also print payment
-metadata to `stderr`:
+metadata to `stderr`. By default this is a single human-readable line:
 
 ```
-Payment:
-  amount: 0.001000
-  asset: USDC
-  network: solana-mainnet-beta
-  tx_signature: 5k7...
+Payment: 0.001000 USDC on solana-mainnet-beta, tx 5k7..., response HTTP 200
+```
+
+Use `--format json` or `--format yaml` with `--payment-info` for structured
+metadata without changing the wrapped response on `stdout`. With `NO_DNA=1`,
+this metadata defaults to JSON when no explicit format is provided:
+
+```json
+{
+  "payment": {
+    "amount": "0.001000",
+    "asset": "USDC",
+    "network": "solana-mainnet-beta",
+    "txSignature": "5k7..."
+  },
+  "response": {
+    "status": 200
+  }
+}
 ```
 
 Successful paid retries are also recorded in local history at
