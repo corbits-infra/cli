@@ -1,7 +1,7 @@
 export PATH			:=		$(PWD)/bin:$(PATH)
 export INSIDE_STAGING_DIR	:=		false
 
-all: lint build test
+all: build lint test
 
 pre-build: FORCE
 	rm -f .eslintcache .build-finished

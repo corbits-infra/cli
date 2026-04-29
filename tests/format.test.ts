@@ -2,15 +2,16 @@
 
 import t from "tap";
 import {
+  formatTokenAmount,
   formatPrice,
   printFormatted,
-  printJson,
+  printJSON,
   printYaml,
   printTable,
 } from "../src/output/format.js";
-import { captureStdout } from "./helpers.js";
+import { captureStdout } from "./test-helpers.js";
 
-function parseJson(value: string): unknown {
+function parseJSON(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
@@ -26,17 +27,36 @@ await t.test("formatPrice", async (t) => {
   });
 });
 
-await t.test("printJson", async (t) => {
+await t.test("formatTokenAmount", async (t) => {
+  await t.test("formats integer base units using token decimals", async (t) => {
+    t.equal(formatTokenAmount("10000", 6), "0.010000");
+    t.equal(formatTokenAmount("1000", 6), "0.001000");
+    t.equal(formatTokenAmount("1", 6), "0.000001");
+    t.equal(formatTokenAmount("1000000", 6), "1.000000");
+    t.equal(formatTokenAmount("42", 0), "42");
+    t.end();
+  });
+
+  await t.test(
+    "returns the original value for non-integer strings",
+    async (t) => {
+      t.equal(formatTokenAmount("0.01", 6), "0.01");
+      t.end();
+    },
+  );
+});
+
+await t.test("printJSON", async (t) => {
   await t.test("outputs formatted JSON", async (t) => {
-    const output = await captureStdout(() => printJson({ a: 1, b: "two" }));
-    const parsed = parseJson(output) as { a: number; b: string };
+    const output = await captureStdout(() => printJSON({ a: 1, b: "two" }));
+    const parsed = parseJSON(output) as { a: number; b: string };
     t.equal(parsed.a, 1);
     t.equal(parsed.b, "two");
     t.end();
   });
 
   await t.test("outputs arrays", async (t) => {
-    const output = await captureStdout(() => printJson([1, 2, 3]));
+    const output = await captureStdout(() => printJSON([1, 2, 3]));
     t.same(JSON.parse(output), [1, 2, 3]);
     t.end();
   });
@@ -92,7 +112,7 @@ await t.test("printFormatted", async (t) => {
     const output = await captureStdout(() =>
       printFormatted("json", items, ["ID", "Name"], toRow),
     );
-    const parsed = parseJson(output) as { id: number; name: string }[];
+    const parsed = parseJSON(output) as { id: number; name: string }[];
     t.equal(parsed.length, 2);
     t.equal(parsed.at(0)?.name, "alpha");
     t.end();

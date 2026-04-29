@@ -2,13 +2,13 @@ import { command, number, positional, flag } from "cmd-ts";
 import {
   getProxy,
   listAllProxyEndpoints,
-  getProxyOpenapi,
-  resolveApiBaseUrl,
+  getProxyOpenAPI,
+  resolveAPIBaseURL,
 } from "../api/client.js";
 import {
   formatPrice,
   printFormatted,
-  printJson,
+  printJSON,
   printYaml,
   writeLine,
 } from "../output/format.js";
@@ -26,13 +26,13 @@ export const inspect = command({
     format: formatFlag,
   },
   handler: async ({ proxyId, openapi, format }) => {
-    const baseUrl = await resolveApiBaseUrl();
+    const baseURL = await resolveAPIBaseURL();
 
     if (openapi) {
       const fmt = await resolveOutputFormat(format);
-      const spec = await getProxyOpenapi(proxyId, baseUrl);
+      const spec = await getProxyOpenAPI(proxyId, baseURL);
       if (fmt === "json") {
-        printJson(spec.data.spec);
+        printJSON(spec.data.spec);
       } else {
         printYaml(spec.data.spec);
       }
@@ -40,11 +40,11 @@ export const inspect = command({
     }
 
     const fmt = await resolveOutputFormat(format);
-    const proxy = await getProxy(proxyId, baseUrl);
-    const endpoints = await listAllProxyEndpoints(proxyId, baseUrl);
+    const proxy = await getProxy(proxyId, baseURL);
+    const endpoints = await listAllProxyEndpoints(proxyId, baseURL);
 
     if (fmt === "json") {
-      printJson({ proxy: proxy.data, endpoints });
+      printJSON({ proxy: proxy.data, endpoints });
       return;
     }
     if (fmt === "yaml") {

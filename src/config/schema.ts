@@ -1,7 +1,8 @@
-import { parse, stringify } from "smol-toml";
 import os from "node:os";
 import path from "node:path";
+
 import { type } from "arktype";
+import { parse, stringify } from "smol-toml";
 import {
   normalizeNetworkId,
   solana,
@@ -12,7 +13,6 @@ import {
 const PAYMENT_NETWORKS = [
   "devnet",
   "mainnet-beta",
-  "localnet",
   "base",
   "base-sepolia",
 ] as const;
@@ -20,8 +20,7 @@ export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
 const PaymentNetworkSchema = type.enumerated(...PAYMENT_NETWORKS);
 const PAYMENT_NETWORK_DISPLAY_NAMES: Record<PaymentNetwork, string> = {
   devnet: "solana-devnet",
-  "mainnet-beta": "solana-mainnet-beta",
-  localnet: "solana-localnet",
+  "mainnet-beta": "solana-mainnet",
   base: "base",
   "base-sepolia": "base-sepolia",
 };
@@ -62,6 +61,11 @@ const PaymentSectionSchema = type({
   "rpc_url_overrides?": "object",
 });
 
+const SpendingSectionSchema = type({
+  "+": "reject",
+  "confirm_above_usd?": "string",
+});
+
 const WalletsSectionSchema = type({
   "+": "reject",
   "solana?": "object",
@@ -73,15 +77,15 @@ const ConfigFileSchema = type({
   version: "1",
   preferences: PreferencesSchema,
   payment: PaymentSectionSchema,
+  "spending?": SpendingSectionSchema,
   wallets: WalletsSectionSchema,
 });
-
 export type WalletRegistry = {
   solana?: WalletConfig;
   evm?: WalletConfig;
 };
 
-export type RpcUrlOverrides = Partial<Record<PaymentNetwork, string>>;
+export type RPCURLOverrides = Partial<Record<PaymentNetwork, string>>;
 
 export type CorbitsConfig = {
   version: 1;
@@ -91,7 +95,10 @@ export type CorbitsConfig = {
   };
   payment: {
     network: PaymentNetwork;
-    rpc_url_overrides?: RpcUrlOverrides;
+    rpc_url_overrides?: RPCURLOverrides;
+  };
+  spending?: {
+    confirm_above_usd?: string;
   };
   wallets: WalletRegistry;
 };
@@ -117,14 +124,17 @@ export type ResolvedConfig = {
   version: 1;
   preferences: {
     format: OutputFormat;
-    apiUrl: string;
+    apiURL: string;
   };
   payment: {
     network: PaymentNetwork;
     family: WalletFamily;
     address: string;
     asset: string;
-    rpcUrl: string;
+    rpcURL: string;
+  };
+  spending?: {
+    confirmAboveUsd?: string;
   };
   activeWallet: ResolvedWallet;
 };
@@ -140,16 +150,18 @@ type WalletInputs = {
 
 type ConfigInitInput = {
   network: string;
-  rpcUrl?: string;
+  rpcURL?: string;
   format?: OutputFormat;
-  apiUrl?: string;
+  apiURL?: string;
+  confirmAboveUsd?: string;
 } & WalletInputs;
 
 export type ConfigUpdateInput = {
   network?: string;
-  rpcUrl?: string;
+  rpcURL?: string;
   format?: OutputFormat;
-  apiUrl?: string;
+  apiURL?: string;
+  confirmAboveUsd?: string;
 } & WalletInputs;
 
 export const DEFAULT_API_URL = "https://api.corbits.dev";
@@ -157,7 +169,6 @@ export const DEFAULT_API_URL = "https://api.corbits.dev";
 const DEFAULT_RPC_URLS: Record<PaymentNetwork, string> = {
   devnet: "https://api.devnet.solana.com",
   "mainnet-beta": "https://api.mainnet-beta.solana.com",
-  localnet: "http://127.0.0.1:8899",
   base: "https://mainnet.base.org",
   "base-sepolia": "https://sepolia.base.org",
 };
@@ -188,17 +199,30 @@ export function isPaymentNetwork(value: string): value is PaymentNetwork {
 export function getWalletFamilyForNetwork(
   network: PaymentNetwork,
 ): WalletFamily {
-  if (network === "localnet" || solana.isKnownCluster(network)) {
-    return "solana";
+  return getPaymentNetworkContext(network).family;
+}
+
+export function getPaymentNetworkContext(network: PaymentNetwork): {
+  family: WalletFamily;
+  displayName: string;
+} {
+  if (solana.isKnownCluster(network)) {
+    return {
+      family: "solana",
+      displayName: PAYMENT_NETWORK_DISPLAY_NAMES[network],
+    };
   }
-  return "evm";
+  return {
+    family: "evm",
+    displayName: PAYMENT_NETWORK_DISPLAY_NAMES[network],
+  };
 }
 
 export function getPaymentNetworkDefaults(network: PaymentNetwork): {
   asset: string;
-  rpcUrl: string;
+  rpcURL: string;
 } {
-  return { asset: "USDC", rpcUrl: DEFAULT_RPC_URLS[network] };
+  return { asset: "USDC", rpcURL: DEFAULT_RPC_URLS[network] };
 }
 
 function normalizeToPaymentNetwork(input: string): PaymentNetwork | null {
@@ -207,7 +231,6 @@ function normalizeToPaymentNetwork(input: string): PaymentNetwork | null {
   // Solana shorthand: "solana" → mainnet-beta
   if (input === "solana" || input === "solana-mainnet") return "mainnet-beta";
   if (input === "solana-devnet") return "devnet";
-  if (input === "solana-localnet") return "localnet";
   // Try CAIP-2 normalization for EVM networks
   const caip2 = normalizeNetworkId(input);
   const legacy = translateNetworkToLegacy(caip2);
@@ -263,7 +286,7 @@ export function expandHome(value: string): string {
   return value;
 }
 
-function validateAbsoluteUrl(value: string, field: string): string {
+function validateAbsoluteURL(value: string, field: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -279,39 +302,97 @@ function validateAbsoluteUrl(value: string, field: string): string {
   return value;
 }
 
-function normalizeRpcUrlOverrides(
-  overrides: RpcUrlOverrides | undefined,
-): RpcUrlOverrides | undefined {
+function normalizeUsdAmountString(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    throw new ConfigError(
+      `Invalid ${field} "${value}". Expected a non-negative USD amount like 0.25`,
+    );
+  }
+
+  const [wholePart, fractionalPart = ""] = trimmed.split(".");
+  const normalizedWhole = (wholePart ?? "0").replace(/^0+(?=\d)/, "");
+  const normalizedFractional = fractionalPart.replace(/0+$/, "");
+
+  return normalizedFractional.length === 0
+    ? normalizedWhole
+    : `${normalizedWhole}.${normalizedFractional}`;
+}
+
+export function parseUsdAmountValue(value: unknown, field: string): string {
+  return normalizeUsdAmountString(
+    requireConfigString(
+      value,
+      `${field} must be a non-negative USD amount like 0.25`,
+    ),
+    field,
+  );
+}
+
+function normalizeRPCURLOverrides(
+  overrides: RPCURLOverrides | undefined,
+): RPCURLOverrides | undefined {
   if (overrides == null) return undefined;
-  const normalized = Object.fromEntries(
-    Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)),
-  ) as RpcUrlOverrides;
+  const normalized: RPCURLOverrides = {};
+  for (const network of [...PAYMENT_NETWORKS].sort()) {
+    const rpcURL = overrides[network];
+    if (rpcURL != null) {
+      normalized[network] = rpcURL;
+    }
+  }
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-function parseRpcUrlOverrides(value: unknown): RpcUrlOverrides | undefined {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseRPCURLOverrides(value: unknown): RPCURLOverrides | undefined {
   if (value == null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new ConfigError("Config payment.rpc_url_overrides must be a table");
   }
-  const record = value as Record<string, unknown>;
-  const overrides: RpcUrlOverrides = {};
-  for (const [key, rpcUrl] of Object.entries(record)) {
+  const overrides: RPCURLOverrides = {};
+  for (const [key, rpcURL] of Object.entries(value)) {
     const network = normalizeToPaymentNetwork(key);
     if (network == null) {
       throw new ConfigError(
         `Config payment.rpc_url_overrides key "${key}" must be one of: ${formatSupportedPaymentNetworks()}`,
       );
     }
-    overrides[network] = validateAbsoluteUrl(
+    overrides[network] = validateAbsoluteURL(
       requireConfigString(
-        rpcUrl,
+        rpcURL,
         `Config payment.rpc_url_overrides.${network} must be a non-empty URL`,
       ),
       `payment.rpc_url_overrides.${network}`,
     );
   }
-  return normalizeRpcUrlOverrides(overrides);
+  return normalizeRPCURLOverrides(overrides);
+}
+
+function parseSpendingSection(
+  value: unknown,
+): CorbitsConfig["spending"] | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const result = SpendingSectionSchema(value);
+  if (result instanceof type.errors) {
+    throw new ConfigError(`Config spending: ${result.summary}`);
+  }
+
+  if (result.confirm_above_usd == null) {
+    return undefined;
+  }
+
+  return {
+    confirm_above_usd: parseUsdAmountValue(
+      result.confirm_above_usd,
+      "spending.confirm_above_usd",
+    ),
+  };
 }
 
 function parseWalletConfig(
@@ -338,10 +419,7 @@ function formatWalletError(
     "expected" in error &&
     error.expected === "removed"
   ) {
-    const record =
-      typeof error.data === "object" && error.data !== null
-        ? (error.data as Record<string, unknown>)
-        : {};
+    const record = isRecord(error.data) ? error.data : {};
     if (record.kind === "keypair" && key === "wallet_id") {
       return `Config wallets.${family}: wallet_id is not allowed when kind is "keypair"`;
     }
@@ -370,6 +448,8 @@ function formatConfigError(errors: InstanceType<typeof type.errors>): string {
   if (joinedPath === "preferences")
     return "Config preferences section is required";
   if (joinedPath === "payment") return "Config payment section is required";
+  if (joinedPath === "spending" && error.code === "predicate")
+    return "Config spending section must be a table";
   if (joinedPath === "wallets") return "Config wallets section is required";
   if (joinedPath === "preferences.format")
     return 'Config preferences.format must be "table", "json", or "yaml"';
@@ -509,12 +589,12 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
   const wallets = buildWalletRegistry(input);
   requireWalletForFamily(wallets, getWalletFamilyForNetwork(network), network);
   const rpcOverride =
-    input.rpcUrl == null
+    input.rpcURL == null
       ? undefined
       : {
-          [network]: validateAbsoluteUrl(
+          [network]: validateAbsoluteURL(
             requireConfigString(
-              input.rpcUrl,
+              input.rpcURL,
               "config requires --rpc-url <url>",
             ),
             `payment.rpc_url_overrides.${network}`,
@@ -524,9 +604,9 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
     version: 1,
     preferences: {
       format: input.format ?? "table",
-      api_url: validateAbsoluteUrl(
+      api_url: validateAbsoluteURL(
         requireConfigString(
-          input.apiUrl ?? DEFAULT_API_URL,
+          input.apiURL ?? DEFAULT_API_URL,
           "config init requires --api-url <url>",
         ),
         "preferences.api_url",
@@ -536,6 +616,16 @@ export function buildInitialConfig(input: ConfigInitInput): CorbitsConfig {
       network,
       ...(rpcOverride == null ? {} : { rpc_url_overrides: rpcOverride }),
     },
+    ...(input.confirmAboveUsd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              input.confirmAboveUsd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
     wallets,
   });
 }
@@ -552,13 +642,13 @@ export function updateConfig(
           "config set requires --network <name>",
         );
   const rpcOverride =
-    input.rpcUrl == null
+    input.rpcURL == null
       ? config.payment.rpc_url_overrides
-      : normalizeRpcUrlOverrides({
+      : normalizeRPCURLOverrides({
           ...(config.payment.rpc_url_overrides ?? {}),
-          [targetNetwork]: validateAbsoluteUrl(
+          [targetNetwork]: validateAbsoluteURL(
             requireConfigString(
-              input.rpcUrl,
+              input.rpcURL,
               "config requires --rpc-url <url>",
             ),
             `payment.rpc_url_overrides.${targetNetwork}`,
@@ -569,11 +659,11 @@ export function updateConfig(
     preferences: {
       format: input.format ?? config.preferences.format,
       api_url:
-        input.apiUrl == null
+        input.apiURL == null
           ? config.preferences.api_url
-          : validateAbsoluteUrl(
+          : validateAbsoluteURL(
               requireConfigString(
-                input.apiUrl,
+                input.apiURL,
                 "config set requires --api-url <url>",
               ),
               "preferences.api_url",
@@ -583,6 +673,19 @@ export function updateConfig(
       network: targetNetwork,
       ...(rpcOverride == null ? {} : { rpc_url_overrides: rpcOverride }),
     },
+    ...(input.confirmAboveUsd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              input.confirmAboveUsd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
+    ...(input.confirmAboveUsd == null && config.spending != null
+      ? { spending: config.spending }
+      : {}),
     wallets: mergeWalletRegistry(config.wallets, input),
   };
   requireWalletForFamily(
@@ -616,14 +719,15 @@ export function parseConfig(text: string): CorbitsConfig {
   );
   const solanaWallet = parseWalletConfig(config.wallets.solana, "solana");
   const evmWallet = parseWalletConfig(config.wallets.evm, "evm");
-  const rpcUrlOverrides = parseRpcUrlOverrides(
+  const rpcURLOverrides = parseRPCURLOverrides(
     config.payment.rpc_url_overrides,
   );
+  const spending = parseSpendingSection(config.spending);
   const parsed: CorbitsConfig = {
     version: config.version,
     preferences: {
       format: config.preferences.format,
-      api_url: validateAbsoluteUrl(
+      api_url: validateAbsoluteURL(
         requireConfigString(
           config.preferences.api_url,
           "Config preferences.api_url must be a non-empty URL",
@@ -633,10 +737,11 @@ export function parseConfig(text: string): CorbitsConfig {
     },
     payment: {
       network,
-      ...(rpcUrlOverrides == null
+      ...(rpcURLOverrides == null
         ? {}
-        : { rpc_url_overrides: rpcUrlOverrides }),
+        : { rpc_url_overrides: rpcURLOverrides }),
     },
+    ...(spending == null ? {} : { spending }),
     wallets: normalizeWalletRegistry({
       ...(solanaWallet == null ? {} : { solana: solanaWallet }),
       ...(evmWallet == null ? {} : { evm: evmWallet }),
@@ -651,7 +756,7 @@ export function parseConfig(text: string): CorbitsConfig {
 }
 
 export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
-  const rpcUrlOverrides = normalizeRpcUrlOverrides(
+  const rpcURLOverrides = normalizeRPCURLOverrides(
     config.payment.rpc_url_overrides,
   );
   return {
@@ -662,10 +767,20 @@ export function normalizeConfig(config: CorbitsConfig): CorbitsConfig {
     },
     payment: {
       network: config.payment.network,
-      ...(rpcUrlOverrides == null
+      ...(rpcURLOverrides == null
         ? {}
-        : { rpc_url_overrides: rpcUrlOverrides }),
+        : { rpc_url_overrides: rpcURLOverrides }),
     },
+    ...(config.spending?.confirm_above_usd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: parseUsdAmountValue(
+              config.spending.confirm_above_usd,
+              "spending.confirm_above_usd",
+            ),
+          },
+        }),
     wallets: normalizeWalletRegistry(config.wallets),
   };
 }
@@ -703,21 +818,26 @@ export function resolveConfig(config: CorbitsConfig): ResolvedConfig {
     config.payment.network,
   );
   const defaults = getPaymentNetworkDefaults(config.payment.network);
-  const rpcUrl =
+  const rpcURL =
     config.payment.rpc_url_overrides?.[config.payment.network] ??
-    defaults.rpcUrl;
+    defaults.rpcURL;
   return {
     version: config.version,
     preferences: {
       format: config.preferences.format,
-      apiUrl: config.preferences.api_url,
+      apiURL: config.preferences.api_url,
     },
     payment: {
       network: config.payment.network,
       family: getWalletFamilyForNetwork(config.payment.network),
       address: activeWallet.address,
       asset: defaults.asset,
-      rpcUrl,
+      rpcURL,
+    },
+    spending: {
+      ...(config.spending?.confirm_above_usd == null
+        ? {}
+        : { confirmAboveUsd: config.spending.confirm_above_usd }),
     },
     activeWallet,
   };

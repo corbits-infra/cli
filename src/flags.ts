@@ -4,6 +4,16 @@ import type { OutputFormat } from "./output/format.js";
 
 const FORMAT_VALUES = new Set(["table", "json", "yaml"]);
 
+export function tryParseOutputFormat(value: string): OutputFormat | undefined {
+  if (!FORMAT_VALUES.has(value)) {
+    return undefined;
+  }
+  if (value === "table" || value === "json" || value === "yaml") {
+    return value;
+  }
+  return undefined;
+}
+
 export function isNoDnaEnabled(): boolean {
   const value = process.env.NO_DNA;
   return value != null && value !== "" && value !== "0" && value !== "false";
@@ -11,13 +21,9 @@ export function isNoDnaEnabled(): boolean {
 
 export const formatType = {
   async from(s: string): Promise<OutputFormat> {
-    if (!FORMAT_VALUES.has(s)) {
-      throw new Error(
-        `Invalid format "${s}". Must be one of: table, json, yaml`,
-      );
-    }
-    if (s === "table" || s === "json" || s === "yaml") {
-      return s;
+    const format = tryParseOutputFormat(s);
+    if (format != null) {
+      return format;
     }
     throw new Error(`Invalid format "${s}". Must be one of: table, json, yaml`);
   },

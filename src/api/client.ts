@@ -6,22 +6,22 @@ import {
   SearchResponse,
   ProxiesResponse,
   ProxyDetailResponse,
-  ProxyOpenapiResponse,
+  ProxyOpenAPIResponse,
   EndpointsResponse,
 } from "./schemas.js";
 
-export async function resolveApiBaseUrl(): Promise<string> {
+export async function resolveAPIBaseURL(): Promise<string> {
   const loaded = await loadConfig();
-  return loaded?.resolved.preferences.apiUrl ?? DEFAULT_API_URL;
+  return loaded?.resolved.preferences.apiURL ?? DEFAULT_API_URL;
 }
 
-class ApiError extends Error {
+class APIError extends Error {
   constructor(
     public readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = "ApiError";
+    this.name = "APIError";
   }
 }
 
@@ -32,19 +32,21 @@ class ValidationError extends Error {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function request<T extends Type<any>>(
+async function request<T extends Type>(
   schema: T,
   path: string,
-  baseUrl?: string,
+  baseURL?: string,
 ): Promise<T["infer"]> {
-  const resolvedBaseUrl = baseUrl ?? (await resolveApiBaseUrl());
-  const url = `${resolvedBaseUrl}${path}`;
+  const resolvedBaseURL = (baseURL ?? (await resolveAPIBaseURL())).replace(
+    /\/+$/,
+    "",
+  );
+  const url = `${resolvedBaseURL}${path}`;
   const res = await fetch(url);
 
   if (!res.ok) {
     const body = await res.text();
-    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${body}`);
+    throw new APIError(res.status, `${res.status} ${res.statusText}: ${body}`);
   }
 
   const json: unknown = await res.json();
@@ -54,7 +56,7 @@ async function request<T extends Type<any>>(
     throw new ValidationError(result.summary);
   }
 
-  return result as T["infer"];
+  return result;
 }
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -68,11 +70,11 @@ function qs(params: Record<string, string | number | undefined>): string {
   );
 }
 
-export function search(q?: string, baseUrl?: string) {
-  return request(SearchResponse, `/api/v1/search${qs({ q })}`, baseUrl);
+export function search(q?: string, baseURL?: string) {
+  return request(SearchResponse, `/api/v1/search${qs({ q })}`, baseURL);
 }
 
-export async function listAllProxies(baseUrl?: string): Promise<Proxy[]> {
+export async function listAllProxies(baseURL?: string): Promise<Proxy[]> {
   const all: Proxy[] = [];
   let cursor: string | undefined;
 
@@ -80,7 +82,7 @@ export async function listAllProxies(baseUrl?: string): Promise<Proxy[]> {
     const page = await request(
       ProxiesResponse,
       `/api/v1/proxies${qs({ cursor, limit: 100 })}`,
-      baseUrl,
+      baseURL,
     );
     all.push(...page.data);
     if (!page.pagination.hasMore || page.pagination.nextCursor == null) break;
@@ -90,21 +92,21 @@ export async function listAllProxies(baseUrl?: string): Promise<Proxy[]> {
   return all;
 }
 
-export function getProxy(id: number, baseUrl?: string) {
-  return request(ProxyDetailResponse, `/api/v1/proxies/${id}`, baseUrl);
+export function getProxy(id: number, baseURL?: string) {
+  return request(ProxyDetailResponse, `/api/v1/proxies/${id}`, baseURL);
 }
 
-export function getProxyOpenapi(id: number, baseUrl?: string) {
+export function getProxyOpenAPI(id: number, baseURL?: string) {
   return request(
-    ProxyOpenapiResponse,
+    ProxyOpenAPIResponse,
     `/api/v1/proxies/${id}/openapi`,
-    baseUrl,
+    baseURL,
   );
 }
 
 export async function listAllProxyEndpoints(
   proxyId: number,
-  baseUrl?: string,
+  baseURL?: string,
 ): Promise<Endpoint[]> {
   const all: Endpoint[] = [];
   let cursor: string | undefined;
@@ -113,7 +115,7 @@ export async function listAllProxyEndpoints(
     const page = await request(
       EndpointsResponse,
       `/api/v1/proxies/${proxyId}/endpoints${qs({ cursor, limit: 100 })}`,
-      baseUrl,
+      baseURL,
     );
     all.push(...page.data);
     if (!page.pagination.hasMore || page.pagination.nextCursor == null) break;
@@ -123,4 +125,4 @@ export async function listAllProxyEndpoints(
   return all;
 }
 
-export { ApiError, ValidationError, qs };
+export { APIError, ValidationError, qs };

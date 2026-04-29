@@ -49,6 +49,110 @@ NO_DNA=1 corbits inspect 61   # default to JSON for agent callers
 
 The `--openapi` flag outputs the upstream spec as YAML by default, or as JSON with `--format json`.
 
+### call
+
+Run the system `curl` or `wget` client against an x402-gated endpoint using the
+active wallet from config. Corbits wraps the real executable, detects `402 Payment Required`,
+builds the payment header, and retries once with that header attached.
+
+```
+corbits call curl https://api.example.x402.org/resource
+corbits call curl https://api.example.x402.org/data \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}'
+corbits call --yes curl https://api.example.x402.org/resource
+corbits call --payment-info curl https://api.example.x402.org/resource
+corbits call --save-response curl https://api.example.x402.org/resource
+corbits call wget --method=POST https://api.example.x402.org/resource
+```
+
+`call` only supports `curl` and `wget`. These are the underlying system CLIs,
+not Corbits-owned commands. Corbits preserves the wrapped client's normal
+stdout/stderr behavior on successful responses.
+
+For `curl`, multi-transfer invocations with `--next` are rejected because
+Corbits cannot retry them safely after a `402` challenge.
+
+For `wget`, Corbits injects `--server-response` when it is missing so it can
+detect and handle a `402` challenge automatically.
+
+By default, `call` terminates a wrapped `curl` or `wget` process after 120
+seconds so stalled commands do not hang indefinitely. If you pass the wrapped
+client's own timeout option, Corbits does not apply that default. For `curl`,
+use `--max-time` / `-m`; for `wget`, use `--timeout`, `--connect-timeout`,
+`--read-timeout`, or `-T`.
+
+`call` uses the active wallet resolved from the configured payment network:
+
+- keypair wallets are loaded from the configured local key file
+- OWS wallets are resolved by configured wallet name or ID through the local OWS wallet store
+
+If a wrapped request still returns `402` after payment, Corbits exits non-zero
+and prints an error.
+
+If `spending.confirm_above_usd` is configured, Corbits inspects the selected
+payment option before signing. When the normalized USD-equivalent amount exceeds
+that threshold, `call` prompts for confirmation on an interactive terminal.
+Use `--yes` to bypass that prompt. Corbits refuses to guess when the selected
+asset cannot be normalized safely to USD, including unsupported non-USD assets,
+and tells you to inspect the challenge first instead.
+
+When `--payment-info` is set, successful paid retries also print payment
+metadata to `stderr`. By default this is a single human-readable line:
+
+```
+Payment: 0.001000 USDC on solana-mainnet-beta, tx 5k7..., response HTTP 200
+```
+
+Use `--format json` or `--format yaml` with `--payment-info` for structured
+metadata without changing the wrapped response on `stdout`. With `NO_DNA=1`,
+this metadata defaults to JSON when no explicit format is provided:
+
+```json
+{
+  "payment": {
+    "amount": "0.001000",
+    "asset": "USDC",
+    "network": "solana-mainnet-beta",
+    "txSignature": "5k7..."
+  },
+  "response": {
+    "status": 200
+  }
+}
+```
+
+Successful paid retries are also recorded in local history at
+`$XDG_DATA_HOME/corbits/history.jsonl` or `~/.local/share/corbits/history.jsonl`.
+Use `--save-response` to store the successful paid response body alongside the
+history entry. When this flag is set, Corbits buffers the paid retry before
+printing it so the response body can be persisted. This flag is not supported
+together with `curl -o/--output` or `wget -O/--output-document`, because
+Corbits would otherwise need to buffer the paid response and slow delivery.
+
+### history
+
+Inspect locally saved paid-call history.
+
+```
+corbits history
+corbits history --wallet 7xKX
+corbits history --network solana-devnet --host exa.api.corbits.dev
+corbits history --since 1713782400 --until 2026-04-21T12:00:00Z
+corbits history --min-amount 0.001 --max-amount 5
+corbits history show 3
+corbits history --format json
+```
+
+`history` shows the 20 most recent entries by default. Table output includes the
+stable `#` line index used by `history show <index>`. JSON and YAML outputs
+include that same `index` field for each listed entry. `--min-amount` and
+`--max-amount` filter on the displayed paid amount, so values like `0.003` and
+`5` are interpreted as UI amounts rather than raw base units. History records
+keep the paid amount in base units on disk, but all CLI output formats render
+that amount back to UI units for display.
+
 ### config
 
 Inspect and manage the local Corbits config stored at `~/.config/corbits/config.toml`
@@ -58,9 +162,11 @@ or `$XDG_CONFIG_HOME/corbits/config.toml`.
 corbits config show
 corbits config show --format json
 corbits config init --network mainnet-beta --solana-address 7xKX... --solana-path ~/.config/corbits/keys/solana.key --rpc-url https://my.solana.rpc
+corbits config init --network devnet --solana-address 7xKX... --solana-ows primary-solana
 corbits config set --evm-address 0x1234 --evm-ows primary-evm
 corbits config set --network base
 corbits config set --rpc-url https://mainnet.base.org
+corbits config set --confirm-above-usd 0.25
 corbits config set --format yaml --api-url https://staging.corbits.dev
 ```
 
@@ -70,12 +176,19 @@ the config path and effective expanded wallet path when the active wallet uses a
 The config file stores the selected payment network and wallet records. Effective payment
 address is resolved from the active wallet, and asset/RPC URL are resolved from network
 defaults. `--rpc-url` stores a network-scoped override, so switching networks only applies
-the override for the selected network.
+the override for the selected network. `--confirm-above-usd` stores a spending
+policy that prompts before paying when a selected x402 call exceeds the
+configured USD threshold.
 
 ### Output formats
 
-All commands support `--format` (`-f`) with values `table` (default), `json`, or `yaml`.
-If `NO_DNA` is set to a non-empty value and `--format` is omitted, the CLI defaults to `json`. Explicit `--format` flags still take precedence.
+All commands support `--format` (`-f`) with values `table`, `json`, or `yaml`.
+When `--format` is omitted, the CLI resolves the output format in this order:
+
+1. The explicit `--format` flag, when provided
+2. `json` if `NO_DNA` is set to a non-empty value
+3. The configured default format from `corbits config`
+4. `table` when no config default exists
 
 ### Other flags
 

@@ -14,7 +14,7 @@ import {
   ProxyDetailResponse,
   EndpointsResponse,
   EndpointDetailResponse,
-  ProxyOpenapiResponse,
+  ProxyOpenAPIResponse,
 } from "../src/api/schemas.js";
 
 const validProxy = {
@@ -289,9 +289,9 @@ await t.test("EndpointDetailResponse schema", async (t) => {
   });
 });
 
-await t.test("ProxyOpenapiResponse schema", async (t) => {
+await t.test("ProxyOpenAPIResponse schema", async (t) => {
   await t.test("accepts valid response with object spec", async (t) => {
-    const result = ProxyOpenapiResponse({
+    const result = ProxyOpenAPIResponse({
       data: {
         id: 1,
         name: "helius",
@@ -303,7 +303,7 @@ await t.test("ProxyOpenapiResponse schema", async (t) => {
   });
 
   await t.test("rejects non-object spec", async (t) => {
-    const result = ProxyOpenapiResponse({
+    const result = ProxyOpenAPIResponse({
       data: { id: 1, name: "helius", spec: "not an object" },
     });
     t.ok(result instanceof type.errors, "strings should not be valid specs");

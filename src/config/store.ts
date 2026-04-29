@@ -23,6 +23,10 @@ export function getConfigPath(configPath?: string): string {
   return path.join(base, "corbits", "config.toml");
 }
 
+function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && "code" in err;
+}
+
 export async function loadConfig(
   configPath?: string,
 ): Promise<LoadedConfig | null> {
@@ -43,7 +47,7 @@ export async function loadConfig(
       resolved: resolveConfig(config),
     };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoException(err) && err.code === "ENOENT") {
       return null;
     }
     if (err instanceof ConfigError) throw err;
@@ -59,7 +63,7 @@ export async function loadRequiredConfig(
   const loaded = await loadConfig(configPath);
   if (loaded == null) {
     throw new ConfigError(
-      "Config is not initialized, so `corbits config set` cannot update it yet. First run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` (or the matching EVM flags, plus optional `--rpc-url <url>`) to create the config, then rerun your `corbits config set ...` command.",
+      "Config is not initialized, so `corbits config set` cannot update it yet. First run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or `corbits config init --network <name> --solana-address <addr> --solana-ows <wallet-id>` (with the matching EVM `--evm-path` / `--evm-ows` flags for EVM networks, plus optional `--rpc-url <url>`) to create the config, then rerun your `corbits config set ...` command.",
     );
   }
 
