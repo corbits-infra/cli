@@ -755,18 +755,6 @@ export function createCallCommand(deps: CallDeps) {
         return;
       }
 
-      const { resolved } = await deps.loadRequiredConfig();
-      const activeConfig =
-        asset == null
-          ? resolved
-          : {
-              ...resolved,
-              payment: {
-                ...resolved.payment,
-                asset,
-              },
-            };
-
       if (result.kind === "completed") {
         writeOutcomeOutput(result);
         return;
@@ -781,6 +769,18 @@ export function createCallCommand(deps: CallDeps) {
         write402Error(result.reason);
         return;
       }
+
+      const { resolved } = await deps.loadRequiredConfig();
+      const activeConfig =
+        asset == null
+          ? resolved
+          : {
+              ...resolved,
+              payment: {
+                ...resolved.payment,
+                asset,
+              },
+            };
 
       if (saveResponse) {
         try {

@@ -316,6 +316,11 @@ Request parsing extracts:
 server-response output is enabled when needed so the wrapper can detect HTTP
 status and payment headers.
 
+Wrapped commands receive a 120-second process timeout by default. The wrapper
+does not apply that timeout when the user has supplied a client-native timeout:
+`curl --max-time` / `-m`, or `wget --timeout`, `--connect-timeout`,
+`--read-timeout`, or `-T`.
+
 The retry header is injected as an additional wrapped-client header. The wrapper
 returns structured run outcomes so the command layer can distinguish completed
 requests, payment-required responses, payment rejections, and unsupported

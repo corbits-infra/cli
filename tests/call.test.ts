@@ -178,6 +178,7 @@ function createSpawnStub(
 
 function createHangingSpawnStub(args: {
   onKill?: (signal?: NodeJS.Signals | number) => void;
+  closeAfterMs?: number;
 }) {
   return (() => {
     const child = new EventEmitter() as EventEmitter & {
@@ -187,13 +188,31 @@ function createHangingSpawnStub(args: {
     };
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
+    let closed = false;
+    const close = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", 0, null);
+    };
     child.kill = ((signal?: NodeJS.Signals | number) => {
+      if (closed) {
+        return true;
+      }
+      closed = true;
       args.onKill?.(signal);
       child.stdout.end();
       child.stderr.end();
       child.emit("close", null, typeof signal === "string" ? signal : null);
       return true;
     }) as ChildProcess["kill"];
+
+    if (args.closeAfterMs != null) {
+      setTimeout(close, args.closeAfterMs);
+    }
 
     return child as unknown as ReturnType<
       typeof import("node:child_process").spawn
@@ -480,9 +499,16 @@ await t.test("call wrapper helpers", async (t) => {
     t.equal(testExports.hasCurlFailFlag(["--fail"]), true);
     t.equal(testExports.hasCurlFailFlag(["-fsS"]), true);
     t.equal(testExports.hasCurlFailFlag(["-sSf"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-fL"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-fLsS"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-Lf"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-fJ"]), true);
+    t.equal(testExports.hasCurlFailFlag(["-fn"]), true);
     t.equal(testExports.hasCurlFailFlag(["-dfoo=bar"]), false);
     t.equal(testExports.hasCurlFailFlag(["-ufoo:bar"]), false);
     t.equal(testExports.hasCurlFailFlag(["-Afirefox"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-Hfoo: bar"]), false);
+    t.equal(testExports.hasCurlFailFlag(["-Kfoo.conf"]), false);
     t.equal(testExports.hasCurlFailFlag(["-XPOST"]), false);
     t.equal(testExports.hasCurlFailFlag(["-ofoo.json"]), false);
     t.equal(testExports.hasCurlFailFlag(["-Dheaders.txt"]), false);
@@ -514,6 +540,31 @@ await t.test("call wrapper helpers", async (t) => {
       );
     },
   );
+
+  await t.test("detects wrapped client timeout flags", async (t) => {
+    t.equal(testExports.hasCurlTimeoutFlag(["--max-time", "600"]), true);
+    t.equal(testExports.hasCurlTimeoutFlag(["--max-time=600"]), true);
+    t.equal(testExports.hasCurlTimeoutFlag(["-m", "600"]), true);
+    t.equal(testExports.hasCurlTimeoutFlag(["-m600"]), true);
+    t.equal(testExports.hasCurlTimeoutFlag(["-sm600"]), true);
+    t.equal(testExports.hasCurlTimeoutFlag(["-omyfile"]), false);
+    t.equal(testExports.hasCurlTimeoutFlag(["-Amozilla"]), false);
+    t.equal(testExports.hasCurlTimeoutFlag(["--", "--max-time", "600"]), false);
+    t.equal(testExports.hasCurlTimeoutFlag(["https://example.com"]), false);
+
+    t.equal(testExports.hasWgetTimeoutFlag(["--timeout", "600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["--timeout=600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["--connect-timeout", "600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["--connect-timeout=600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["--read-timeout", "600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["--read-timeout=600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["-T", "600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["-T600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["-qT600"]), true);
+    t.equal(testExports.hasWgetTimeoutFlag(["-OTmp"]), false);
+    t.equal(testExports.hasWgetTimeoutFlag(["--", "--timeout", "600"]), false);
+    t.equal(testExports.hasWgetTimeoutFlag(["https://example.com"]), false);
+  });
 
   await t.test(
     "strips curl output capture flags before the wrapped execution",
@@ -596,6 +647,56 @@ await t.test("wrapped client runner", async (t) => {
     );
     t.same(kills, ["SIGTERM"]);
   });
+
+  await t.test(
+    "does not apply wrapper timeout when curl has its own timeout",
+    async (t) => {
+      const tempDir = t.testdir();
+      const kills: (NodeJS.Signals | number | undefined)[] = [];
+      const runWrappedClient = createRunWrappedClient(
+        createWrapperDeps(tempDir, {
+          commandTimeoutMs: 1,
+          spawn: createHangingSpawnStub({
+            closeAfterMs: 10,
+            onKill: (signal) => {
+              kills.push(signal);
+            },
+          }),
+        }),
+      );
+
+      await runWrappedClient({
+        tool: "curl",
+        args: ["--max-time", "600", "https://example.com"],
+      });
+      t.same(kills, []);
+    },
+  );
+
+  await t.test(
+    "does not apply wrapper timeout when wget has its own timeout",
+    async (t) => {
+      const tempDir = t.testdir();
+      const kills: (NodeJS.Signals | number | undefined)[] = [];
+      const runWrappedClient = createRunWrappedClient(
+        createWrapperDeps(tempDir, {
+          commandTimeoutMs: 1,
+          spawn: createHangingSpawnStub({
+            closeAfterMs: 10,
+            onKill: (signal) => {
+              kills.push(signal);
+            },
+          }),
+        }),
+      );
+
+      await runWrappedClient({
+        tool: "wget",
+        args: ["--timeout", "600", "https://example.com"],
+      });
+      t.same(kills, []);
+    },
+  );
 
   await t.test("injects curl retry headers on second pass", async (t) => {
     const tempDir = t.testdir();
@@ -706,7 +807,7 @@ await t.test("wrapped client runner", async (t) => {
     await t.rejects(
       runWrappedClient({
         tool: "curl",
-        args: ["-fsS", "https://example.com"],
+        args: ["-fL", "https://example.com"],
       }),
       /-f\/--fail.*402 challenge body/,
     );
@@ -2485,7 +2586,9 @@ await t.test("call command", async (t) => {
       });
 
       const call = createCallCommand({
-        loadRequiredConfig: async () => createLoadedConfig(),
+        loadRequiredConfig: async () => {
+          throw new Error("should not load required config");
+        },
         buildPaymentRetryHeader: async () => {
           throw new Error("should not build payment header");
         },

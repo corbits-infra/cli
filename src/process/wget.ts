@@ -75,6 +75,75 @@ export function hasWgetContentOnErrorFlag(args: string[]): boolean {
   return args.some((arg) => arg === "--content-on-error");
 }
 
+const WGET_TIMEOUT_FLAGS = [
+  "--timeout",
+  "--connect-timeout",
+  "--read-timeout",
+] as const;
+
+const WGET_SHORT_FLAGS_WITH_ATTACHED_VALUES = new Set([
+  "A",
+  "B",
+  "D",
+  "I",
+  "O",
+  "P",
+  "Q",
+  "R",
+  "T",
+  "U",
+  "X",
+  "e",
+  "l",
+  "o",
+]);
+
+function hasWgetShortTimeoutFlag(arg: string): boolean {
+  if (!arg.startsWith("-") || arg.startsWith("--")) {
+    return false;
+  }
+
+  for (let index = 1; index < arg.length; index += 1) {
+    const flag = arg[index];
+    if (flag === "T") {
+      return true;
+    }
+
+    if (
+      flag != null &&
+      WGET_SHORT_FLAGS_WITH_ATTACHED_VALUES.has(flag) &&
+      index < arg.length - 1
+    ) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+export function hasWgetTimeoutFlag(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") {
+      return false;
+    }
+    if (
+      WGET_TIMEOUT_FLAGS.some(
+        (flag) => arg === flag || arg.startsWith(`${flag}=`),
+      )
+    ) {
+      return true;
+    }
+    if (!arg.startsWith("-") || arg.startsWith("--")) {
+      continue;
+    }
+    if (hasWgetShortTimeoutFlag(arg)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function parseWgetOutputTarget(args: string[]): WgetOutputTarget {
   let bodyPath: string | null = null;
 
@@ -281,6 +350,9 @@ export async function runWget(
     "-O",
     plan.captureBodyToStdout ? "-" : bodyPath,
   ];
+  const timeoutMs = hasWgetTimeoutFlag(args)
+    ? undefined
+    : deps.commandTimeoutMs;
 
   try {
     const spawnCommand = deps.spawn ?? spawn;
@@ -292,9 +364,7 @@ export async function runWget(
       stderrPath,
       mirrorStdout: plan.mirrorStdout,
       mirrorStderr: plan.mirrorStderr,
-      ...(deps.commandTimeoutMs == null
-        ? {}
-        : { timeoutMs: deps.commandTimeoutMs }),
+      ...(timeoutMs == null ? {} : { timeoutMs }),
     });
     const body = await deps
       .readBinaryFile(bodyPath)

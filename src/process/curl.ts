@@ -36,8 +36,54 @@ export function hasCurlIncludeHeadersFlag(args: string[]): boolean {
   return args.some((arg) => arg === "-i" || arg === "--include");
 }
 
+const CURL_SHORT_FLAGS_WITH_ATTACHED_VALUES = new Set([
+  "A",
+  "b",
+  "c",
+  "C",
+  "d",
+  "D",
+  "e",
+  "E",
+  "F",
+  "H",
+  "K",
+  "m",
+  "o",
+  "P",
+  "Q",
+  "r",
+  "T",
+  "u",
+  "w",
+  "x",
+  "X",
+  "Y",
+  "y",
+  "z",
+]);
+
 function hasCurlShortFailFlag(arg: string): boolean {
-  return /^-[sS]*f[sS]*$/.test(arg);
+  if (!arg.startsWith("-") || arg.startsWith("--")) {
+    return false;
+  }
+
+  for (let index = 1; index < arg.length; index += 1) {
+    const flag = arg[index];
+    if (flag === "f") {
+      return true;
+    }
+
+    if (
+      flag != null &&
+      CURL_SHORT_FLAGS_WITH_ATTACHED_VALUES.has(flag) &&
+      index < arg.length - 1
+    ) {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 export function hasCurlFailFlag(args: string[]): boolean {
@@ -46,6 +92,48 @@ export function hasCurlFailFlag(args: string[]): boolean {
 
 export function hasCurlNextFlag(args: string[]): boolean {
   return args.some((arg) => arg === "--next");
+}
+
+function hasCurlShortTimeoutFlag(arg: string): boolean {
+  if (!arg.startsWith("-") || arg.startsWith("--")) {
+    return false;
+  }
+
+  for (let index = 1; index < arg.length; index += 1) {
+    const flag = arg[index];
+    if (flag === "m") {
+      return true;
+    }
+
+    if (
+      flag != null &&
+      CURL_SHORT_FLAGS_WITH_ATTACHED_VALUES.has(flag) &&
+      index < arg.length - 1
+    ) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+export function hasCurlTimeoutFlag(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") {
+      return false;
+    }
+    if (arg === "--max-time" || arg.startsWith("--max-time=")) {
+      return true;
+    }
+    if (!arg.startsWith("-") || arg.startsWith("--")) {
+      continue;
+    }
+    if (hasCurlShortTimeoutFlag(arg)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function parseCurlOutputTarget(args: string[]): CurlOutputTarget {
@@ -325,6 +413,9 @@ export async function runCurl(
       streamOutput || extraHeader == null
         ? undefined
         : await parseWrappedRequestInfo(deps, "curl", args);
+    const timeoutMs = hasCurlTimeoutFlag(args)
+      ? undefined
+      : deps.commandTimeoutMs;
 
     const spawnCommand = deps.spawn ?? spawn;
     const output = await runCapturedCommand({
@@ -335,9 +426,7 @@ export async function runCurl(
       stderrPath,
       mirrorStdout: plan.mirrorStdout,
       mirrorStderr: streamOutput,
-      ...(deps.commandTimeoutMs == null
-        ? {}
-        : { timeoutMs: deps.commandTimeoutMs }),
+      ...(timeoutMs == null ? {} : { timeoutMs }),
     });
     const headersRaw = await deps
       .readTextFile(headerPath, "utf8")

@@ -77,6 +77,12 @@ Corbits cannot retry them safely after a `402` challenge.
 For `wget`, Corbits injects `--server-response` when it is missing so it can
 detect and handle a `402` challenge automatically.
 
+By default, `call` terminates a wrapped `curl` or `wget` process after 120
+seconds so stalled commands do not hang indefinitely. If you pass the wrapped
+client's own timeout option, Corbits does not apply that default. For `curl`,
+use `--max-time` / `-m`; for `wget`, use `--timeout`, `--connect-timeout`,
+`--read-timeout`, or `-T`.
+
 `call` uses the active wallet resolved from the configured payment network:
 
 - keypair wallets are loaded from the configured local key file
