@@ -20,7 +20,7 @@ export type PaymentNetwork = (typeof PAYMENT_NETWORKS)[number];
 const PaymentNetworkSchema = type.enumerated(...PAYMENT_NETWORKS);
 const PAYMENT_NETWORK_DISPLAY_NAMES: Record<PaymentNetwork, string> = {
   devnet: "solana-devnet",
-  "mainnet-beta": "solana-mainnet-beta",
+  "mainnet-beta": "solana-mainnet",
   base: "base",
   "base-sepolia": "base-sepolia",
 };

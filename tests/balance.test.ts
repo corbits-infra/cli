@@ -264,7 +264,7 @@ await t.test("resolveUsdcBalance", async (t) => {
       makeBalanceDeps(10_000_000n),
     );
     t.equal(record.amount, "10.000000");
-    t.equal(record.network, "solana-mainnet-beta");
+    t.equal(record.network, "solana-mainnet");
     t.equal(
       record.assetAddress,
       "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -453,7 +453,7 @@ await t.test("checkPreflightBalance", async (t) => {
             { receiverAccountExists: false },
           ),
         ),
-        /Endpoint advertises USDT on solana-mainnet-beta, but the receiver token account is not initialized yet/,
+        /Endpoint advertises USDT on solana-mainnet, but the receiver token account is not initialized yet/,
       );
     },
   );
@@ -768,7 +768,7 @@ await t.test("balance command", async (t) => {
           asset: "So11111111111111111111111111111111111111112",
           format: undefined,
         }),
-        /Asset address So11111111111111111111111111111111111111112 is not registered on solana-mainnet-beta/,
+        /Asset address So11111111111111111111111111111111111111112 is not registered on solana-mainnet/,
       );
     },
   );

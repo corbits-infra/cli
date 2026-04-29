@@ -736,7 +736,7 @@ await t.test("config commands", async (t) => {
         const textOutput = await captureStdout(() =>
           configShow.handler({ format: undefined, config: undefined }),
         );
-        t.match(textOutput, /Payment network: solana-mainnet-beta/);
+        t.match(textOutput, /Payment network: solana-mainnet/);
         t.match(textOutput, /Payment address: 7xKX\.\.\./);
         t.match(
           textOutput,

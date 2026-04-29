@@ -44,11 +44,14 @@ await t.test("config parsing and resolution", async (t) => {
     ]);
     t.equal(
       formatSupportedPaymentNetworks(),
-      "solana-devnet, solana-mainnet-beta, base, base-sepolia",
+      "solana-devnet, solana-mainnet, base, base-sepolia",
     );
     t.equal(isPaymentNetwork("devnet"), true);
     t.equal(isPaymentNetwork("localnet"), false);
     t.equal(isPaymentNetwork("polygon-mainnet"), false);
+    t.equal(parsePaymentNetwork("solana-devnet"), "devnet");
+    t.equal(parsePaymentNetwork("solana"), "mainnet-beta");
+    t.equal(parsePaymentNetwork("solana-mainnet"), "mainnet-beta");
     t.equal(getWalletFamilyForNetwork("base-sepolia"), "evm");
     t.same(getPaymentNetworkDefaults("mainnet-beta"), {
       asset: "USDC",
@@ -56,11 +59,15 @@ await t.test("config parsing and resolution", async (t) => {
     });
     t.throws(
       () => parsePaymentNetwork("localnet"),
-      /solana-devnet, solana-mainnet-beta, base, base-sepolia/,
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
     );
     t.throws(
       () => parsePaymentNetwork("solana-localnet"),
-      /solana-devnet, solana-mainnet-beta, base, base-sepolia/,
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
+    );
+    t.throws(
+      () => parsePaymentNetwork("solana-mainnet-beta"),
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
     );
     t.end();
   });
