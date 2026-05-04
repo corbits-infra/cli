@@ -11,6 +11,7 @@ import {
   isPaymentNetwork,
   listPaymentNetworks,
   parseConfig,
+  parsePaymentNetwork,
   resolveConfig,
   stringifyConfig,
 } from "../src/config/schema.js";
@@ -38,21 +39,36 @@ await t.test("config parsing and resolution", async (t) => {
     t.same(listPaymentNetworks(), [
       "devnet",
       "mainnet-beta",
-      "localnet",
       "base",
       "base-sepolia",
     ]);
     t.equal(
       formatSupportedPaymentNetworks(),
-      "solana-devnet, solana-mainnet-beta, solana-localnet, base, base-sepolia",
+      "solana-devnet, solana-mainnet, base, base-sepolia",
     );
     t.equal(isPaymentNetwork("devnet"), true);
+    t.equal(isPaymentNetwork("localnet"), false);
     t.equal(isPaymentNetwork("polygon-mainnet"), false);
+    t.equal(parsePaymentNetwork("solana-devnet"), "devnet");
+    t.equal(parsePaymentNetwork("solana"), "mainnet-beta");
+    t.equal(parsePaymentNetwork("solana-mainnet"), "mainnet-beta");
     t.equal(getWalletFamilyForNetwork("base-sepolia"), "evm");
     t.same(getPaymentNetworkDefaults("mainnet-beta"), {
       asset: "USDC",
-      rpcUrl: "https://api.mainnet-beta.solana.com",
+      rpcURL: "https://api.mainnet-beta.solana.com",
     });
+    t.throws(
+      () => parsePaymentNetwork("localnet"),
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
+    );
+    t.throws(
+      () => parsePaymentNetwork("solana-localnet"),
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
+    );
+    t.throws(
+      () => parsePaymentNetwork("solana-mainnet-beta"),
+      /solana-devnet, solana-mainnet, base, base-sepolia/,
+    );
     t.end();
   });
 
@@ -80,7 +96,7 @@ await t.test("config parsing and resolution", async (t) => {
         family: "solana",
         address: "7xKX...",
         asset: "USDC",
-        rpcUrl: "https://rpc.devnet.example",
+        rpcURL: "https://rpc.devnet.example",
       });
       t.match(stringifyConfig(parsed), /\[payment\]\nnetwork = "devnet"/);
       t.end();
@@ -126,8 +142,43 @@ wallet_id = "primary-evm"
         family: "evm",
         address: "0x1234",
         asset: "USDC",
-        rpcUrl: "https://base-sepolia.example",
+        rpcURL: "https://base-sepolia.example",
       });
+      t.end();
+    },
+  );
+
+  await t.test(
+    "parses spending confirmation thresholds and resolves them for call-time policy",
+    async (t) => {
+      const parsed = parseConfig(`version = 1
+
+[preferences]
+format = "table"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "devnet"
+
+[spending]
+confirm_above_usd = "0.25"
+
+[wallets.solana]
+address = "7xKX..."
+kind = "keypair"
+path = "~/.config/corbits/keys/devnet.json"
+`);
+
+      t.same(parsed.spending, {
+        confirm_above_usd: "0.25",
+      });
+      t.same(resolveConfig(parsed).spending, {
+        confirmAboveUsd: "0.25",
+      });
+      t.match(
+        stringifyConfig(parsed),
+        /\[spending\]\nconfirm_above_usd = "0\.25"/,
+      );
       t.end();
     },
   );
@@ -315,6 +366,28 @@ extra = "nope"
 `,
         ),
       /Unknown wallets\.evm key "extra"/,
+    );
+
+    t.throws(
+      () =>
+        parseConfig(`version = 1
+
+[preferences]
+format = "table"
+api_url = "https://api.corbits.dev"
+
+[payment]
+network = "devnet"
+
+[spending]
+confirm_above_usd = 0.25
+
+[wallets.solana]
+address = "7xKX..."
+kind = "keypair"
+path = "~/.config/corbits/keys/devnet.json"
+`),
+      /Invalid config: spending\.confirm_above_usd must be a string/,
     );
 
     t.throws(() => parseConfig("[preferences"), /Invalid config TOML/);

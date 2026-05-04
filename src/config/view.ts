@@ -1,6 +1,6 @@
 import type { OutputFormat } from "../output/format.js";
 import {
-  printJson,
+  printJSON,
   printTable,
   printYaml,
   writeLine,
@@ -20,12 +20,15 @@ type ConfigView = {
     api_url: string;
   };
   payment: {
-    network: string;
+    network: PaymentNetwork;
     family: string;
     address: string;
     asset: string;
     rpc_url: string;
     rpc_url_override?: string;
+  };
+  spending?: {
+    confirm_above_usd?: string;
   };
   active_wallet:
     | {
@@ -78,7 +81,7 @@ function buildConfigView(loaded: LoadedConfig): ConfigView {
       family: loaded.resolved.payment.family,
       address: loaded.resolved.payment.address,
       asset: loaded.resolved.payment.asset,
-      rpc_url: loaded.resolved.payment.rpcUrl,
+      rpc_url: loaded.resolved.payment.rpcURL,
       ...(loaded.config.payment.rpc_url_overrides?.[
         loaded.config.payment.network
       ] == null
@@ -90,6 +93,13 @@ function buildConfigView(loaded: LoadedConfig): ConfigView {
               ],
           }),
     },
+    ...(loaded.config.spending?.confirm_above_usd == null
+      ? {}
+      : {
+          spending: {
+            confirm_above_usd: loaded.config.spending.confirm_above_usd,
+          },
+        }),
     active_wallet: buildActiveWalletView(loaded),
     wallets: loaded.config.wallets,
   };
@@ -102,7 +112,7 @@ export function printConfigView(
   const view = buildConfigView(loaded);
 
   if (format === "json") {
-    printJson(view);
+    printJSON(view);
     return;
   }
 
@@ -113,9 +123,7 @@ export function printConfigView(
 
   writeLine(`Config path: ${view.path}`);
   writeLine(
-    `Payment network: ${formatPaymentNetworkDisplay(
-      view.payment.network as PaymentNetwork,
-    )}`,
+    `Payment network: ${formatPaymentNetworkDisplay(view.payment.network)}`,
   );
   writeLine(`Payment family: ${view.payment.family}`);
   writeLine(`Default format: ${view.preferences.format}`);
@@ -125,6 +133,9 @@ export function printConfigView(
   writeLine(`Payment RPC URL: ${view.payment.rpc_url}`);
   if (view.payment.rpc_url_override != null) {
     writeLine(`Payment RPC override: ${view.payment.rpc_url_override}`);
+  }
+  if (view.spending?.confirm_above_usd != null) {
+    writeLine(`Confirm above USD: ${view.spending.confirm_above_usd}`);
   }
 
   if (view.active_wallet.kind === "keypair") {
@@ -154,11 +165,11 @@ export function printMissingConfig(path: string, format: OutputFormat): void {
   const payload = {
     initialized: false,
     path,
-    help: "Run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or the matching EVM flags, plus optional `--rpc-url <url>`",
+    help: "Run `corbits config init --network <name> --solana-address <addr> --solana-path <path>` or `corbits config init --network <name> --solana-address <addr> --solana-ows <wallet-id>` (with the matching EVM `--evm-path` / `--evm-ows` flags for EVM networks), plus optional `--rpc-url <url>`",
   };
 
   if (format === "json") {
-    printJson(payload);
+    printJSON(payload);
     return;
   }
 

@@ -1,6 +1,6 @@
 import { command, option, optional, string, subcommands } from "cmd-ts";
 import {
-  printJson,
+  printJSON,
   printTable,
   printYaml,
   type OutputFormat,
@@ -24,16 +24,11 @@ import {
   saveConfig,
   updateConfig,
 } from "../config/index.js";
-import {
-  formatFlag,
-  formatType,
-  isNoDnaEnabled,
-  resolveOutputFormat,
-} from "../flags.js";
+import { formatFlag, formatType, resolveOutputFormat } from "../flags.js";
 
 type ConfigMutationArgs = {
   network: string | undefined;
-  rpcUrl: string | undefined;
+  rpcURL: string | undefined;
   solanaAddress: string | undefined;
   solanaPath: string | undefined;
   solanaOws: string | undefined;
@@ -41,7 +36,8 @@ type ConfigMutationArgs = {
   evmPath: string | undefined;
   evmOws: string | undefined;
   format: OutputFormat | undefined;
-  apiUrl: string | undefined;
+  apiURL: string | undefined;
+  confirmAboveUsd: string | undefined;
 };
 
 function stringMutationOption(long: string, description: string) {
@@ -52,13 +48,6 @@ function stringMutationOption(long: string, description: string) {
   });
 }
 
-function resolveConfigMutationFormat(config?: CorbitsConfig): OutputFormat {
-  if (isNoDnaEnabled()) {
-    return "json";
-  }
-  return config?.preferences.format ?? "table";
-}
-
 function printConfigMutationResult(
   format: OutputFormat,
   summary: string | undefined,
@@ -66,7 +55,7 @@ function printConfigMutationResult(
   payload: unknown,
 ): void {
   if (format === "json") {
-    printJson(payload);
+    printJSON(payload);
     return;
   }
 
@@ -91,17 +80,13 @@ async function saveConfigAndPrintMutationResult(
   payload: unknown,
 ): Promise<void> {
   await saveConfig(path, config);
-  printConfigMutationResult(
-    resolveConfigMutationFormat(config),
-    summary,
-    rows,
-    payload,
-  );
+  const format = await resolveOutputFormat(undefined, path);
+  printConfigMutationResult(format, summary, rows, payload);
 }
 
 const configMutationArgs = {
   network: stringMutationOption("network", "Payment network"),
-  rpcUrl: stringMutationOption(
+  rpcURL: stringMutationOption(
     "rpc-url",
     "RPC URL override for the target network",
   ),
@@ -119,7 +104,11 @@ const configMutationArgs = {
     long: "format",
     description: "Default output format",
   }),
-  apiUrl: stringMutationOption("api-url", "Corbits API base URL"),
+  apiURL: stringMutationOption("api-url", "Corbits API base URL"),
+  confirmAboveUsd: stringMutationOption(
+    "confirm-above-usd",
+    "Prompt before paying when a call costs more than this USD amount",
+  ),
 };
 
 function formatMutationValue(value: unknown): string {
@@ -138,7 +127,7 @@ function formatMutationValue(value: unknown): string {
 function buildConfigMutationInput(args: ConfigMutationArgs): ConfigUpdateInput {
   return {
     ...(args.network == null ? {} : { network: args.network }),
-    ...(args.rpcUrl == null ? {} : { rpcUrl: args.rpcUrl }),
+    ...(args.rpcURL == null ? {} : { rpcURL: args.rpcURL }),
     ...(args.solanaAddress == null
       ? {}
       : { solanaAddress: args.solanaAddress }),
@@ -148,7 +137,10 @@ function buildConfigMutationInput(args: ConfigMutationArgs): ConfigUpdateInput {
     ...(args.evmPath == null ? {} : { evmPath: args.evmPath }),
     ...(args.evmOws == null ? {} : { evmOws: args.evmOws }),
     ...(args.format == null ? {} : { format: args.format }),
-    ...(args.apiUrl == null ? {} : { apiUrl: args.apiUrl }),
+    ...(args.apiURL == null ? {} : { apiURL: args.apiURL }),
+    ...(args.confirmAboveUsd == null
+      ? {}
+      : { confirmAboveUsd: args.confirmAboveUsd }),
   };
 }
 
@@ -176,7 +168,7 @@ function validateInitWalletRequirements(args: ConfigMutationArgs): void {
 function shouldIncludeResolvedPayment(input: ConfigUpdateInput): boolean {
   return (
     input.network != null ||
-    input.rpcUrl != null ||
+    input.rpcURL != null ||
     input.solanaAddress != null ||
     input.solanaPath != null ||
     input.solanaOws != null ||
@@ -198,8 +190,8 @@ function buildMutationEntries(
   if (input.network != null) {
     entries.push({ key: "payment_network", value: resolved.payment.network });
   }
-  if (input.rpcUrl != null) {
-    entries.push({ key: "payment_rpc_url_override", value: input.rpcUrl });
+  if (input.rpcURL != null) {
+    entries.push({ key: "payment_rpc_url_override", value: input.rpcURL });
   }
   if (
     input.solanaAddress != null ||
@@ -218,13 +210,19 @@ function buildMutationEntries(
   if (input.format != null) {
     entries.push({ key: "format", value: config.preferences.format });
   }
-  if (input.apiUrl != null) {
+  if (input.apiURL != null) {
     entries.push({ key: "api_url", value: config.preferences.api_url });
+  }
+  if (input.confirmAboveUsd != null) {
+    entries.push({
+      key: "spending_confirm_above_usd",
+      value: config.spending?.confirm_above_usd,
+    });
   }
   if (shouldIncludeResolvedPayment(input)) {
     entries.push({ key: "payment_address", value: resolved.payment.address });
     entries.push({ key: "payment_asset", value: resolved.payment.asset });
-    entries.push({ key: "payment_rpc_url", value: resolved.payment.rpcUrl });
+    entries.push({ key: "payment_rpc_url", value: resolved.payment.rpcURL });
   }
 
   return entries;
@@ -281,8 +279,9 @@ export const configInit = command({
     const configPath = getConfigPath(args.config);
     const existing = await loadConfig(args.config);
     if (existing != null) {
+      const format = await resolveOutputFormat(args.format, args.config);
       printConfigMutationResult(
-        resolveConfigMutationFormat(existing.config),
+        format,
         "config: already initialized (no-op)",
         [
           ["path", existing.path],
@@ -302,9 +301,9 @@ export const configInit = command({
 
     const config = buildInitialConfig({
       network: args.network ?? "",
-      ...(args.rpcUrl == null ? {} : { rpcUrl: args.rpcUrl }),
+      ...(args.rpcURL == null ? {} : { rpcURL: args.rpcURL }),
       ...(args.format == null ? {} : { format: args.format }),
-      ...(args.apiUrl == null ? {} : { apiUrl: args.apiUrl }),
+      ...(args.apiURL == null ? {} : { apiURL: args.apiURL }),
       ...(args.solanaAddress == null
         ? {}
         : { solanaAddress: args.solanaAddress }),
@@ -313,6 +312,9 @@ export const configInit = command({
       ...(args.evmAddress == null ? {} : { evmAddress: args.evmAddress }),
       ...(args.evmPath == null ? {} : { evmPath: args.evmPath }),
       ...(args.evmOws == null ? {} : { evmOws: args.evmOws }),
+      ...(args.confirmAboveUsd == null
+        ? {}
+        : { confirmAboveUsd: args.confirmAboveUsd }),
     });
 
     const resolved = resolveConfig(config);
@@ -324,9 +326,17 @@ export const configInit = command({
         ["path", configPath],
         ["payment_network", config.payment.network],
         ["payment_address", resolved.payment.address],
-        ...(args.rpcUrl == null
+        ...(args.rpcURL == null
           ? []
-          : [["payment_rpc_url_override", args.rpcUrl]]),
+          : [["payment_rpc_url_override", args.rpcURL]]),
+        ...(args.confirmAboveUsd == null
+          ? []
+          : [
+              [
+                "spending_confirm_above_usd",
+                config.spending?.confirm_above_usd ?? "",
+              ],
+            ]),
       ],
       {
         status: "ok",
@@ -334,9 +344,14 @@ export const configInit = command({
         path: configPath,
         payment_network: config.payment.network,
         payment_address: resolved.payment.address,
-        ...(args.rpcUrl == null
+        ...(args.rpcURL == null
           ? {}
-          : { payment_rpc_url_override: args.rpcUrl }),
+          : { payment_rpc_url_override: args.rpcURL }),
+        ...(args.confirmAboveUsd == null
+          ? {}
+          : {
+              spending_confirm_above_usd: config.spending?.confirm_above_usd,
+            }),
       },
     );
   },

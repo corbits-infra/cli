@@ -1,10 +1,10 @@
 import { command, option, optional, string, positional } from "cmd-ts";
-import { search, listAllProxies, resolveApiBaseUrl } from "../api/client.js";
+import { search, listAllProxies, resolveAPIBaseURL } from "../api/client.js";
 import type { Proxy, SearchEndpoint } from "../api/schemas.js";
 import {
   formatPrice,
   printFormatted,
-  printJson,
+  printJSON,
   printYaml,
   writeLine,
 } from "../output/format.js";
@@ -20,16 +20,16 @@ export const discover = command({
   },
   handler: async ({ query, tag, format: formatArg }) => {
     const format = await resolveOutputFormat(formatArg);
-    const baseUrl = await resolveApiBaseUrl();
+    const baseURL = await resolveAPIBaseURL();
     let proxies: Proxy[];
     let endpoints: SearchEndpoint[] = [];
 
     if (query) {
-      const result = await search(query, baseUrl);
+      const result = await search(query, baseURL);
       proxies = result.proxies;
       endpoints = result.endpoints;
     } else {
-      proxies = await listAllProxies(baseUrl);
+      proxies = await listAllProxies(baseURL);
     }
 
     if (tag) {
@@ -48,7 +48,7 @@ export const discover = command({
     }
 
     if (format === "json") {
-      printJson(query ? { proxies, endpoints } : proxies);
+      printJSON(query ? { proxies, endpoints } : proxies);
       return;
     }
     if (format === "yaml") {

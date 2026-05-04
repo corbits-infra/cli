@@ -73,11 +73,11 @@ export const EndpointDetailResponse = type({
 });
 export type EndpointDetailResponse = typeof EndpointDetailResponse.infer;
 
-export const ProxyOpenapiResponse = type({
+export const ProxyOpenAPIResponse = type({
   data: {
     id: "number",
     name: "string",
     spec: "object",
   },
 });
-export type ProxyOpenapiResponse = typeof ProxyOpenapiResponse.infer;
+export type ProxyOpenAPIResponse = typeof ProxyOpenAPIResponse.infer;
