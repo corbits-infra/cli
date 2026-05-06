@@ -302,9 +302,12 @@ make clean      # remove build artifacts
 This repo includes a `corbits-cli` agent skill under `skills/corbits-cli`.
 Install it with the Skills CLI:
 
+```bash
+npx skills add https://github.com/corbits-infra/cli --skill corbits-cli
 ```
-npx skills add corbits-infra/cli --skill corbits-cli
-```
+
+If your agent does not use the Skills CLI, copy `skills/corbits-cli/SKILL.md`
+into its skills directory.
 
 ## License
 

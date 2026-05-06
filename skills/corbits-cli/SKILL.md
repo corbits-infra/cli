@@ -70,8 +70,8 @@ To create config, use `corbits config init`. Wallet flags are family-specific:
   `--solana-ows`
 - EVM networks use `--evm-address` plus either `--evm-path` or `--evm-ows`
 
-Use `--*-path` for local keypairs and `--*-ows` for OWS wallets. Replace `*`
-with either `solana` or `evm`.
+Use `--solana-path` or `--evm-path` for local keypairs. Use `--solana-ows` or
+`--evm-ows` for OWS wallets.
 
 Solana keypair example:
 
