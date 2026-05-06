@@ -6,18 +6,58 @@ Prices are displayed in USDC.
 
 ## Install
 
-Run directly with npx:
-
-```
-npx @corbits/cli discover
-npx @corbits/cli inspect 61
-```
-
-Or install globally:
+Install globally to use the `corbits` command directly:
 
 ```
 npm install -g @corbits/cli
-corbits discover
+corbits --help
+```
+
+You can also run the CLI without installing it:
+
+```
+npx @corbits/cli --help
+```
+
+The examples below use the global `corbits` command. If you prefer `npx`,
+replace `corbits` with `npx @corbits/cli`.
+
+## Quick start
+
+Start by creating a local Corbits config. The config stores your selected
+payment network, wallet records, RPC URL, and preferred output format.
+
+Use `--solana-*` wallet flags for Solana networks and `--evm-*` wallet flags
+for EVM networks. In `--*-path` and `--*-ows`, replace `*` with either
+`solana` or `evm`; choose one wallet source, either a local keypair path or an
+OWS wallet id.
+
+```
+# 1. Configure Corbits with a local Solana keypair
+corbits config init \
+  --network mainnet-beta \
+  --solana-address 7xKX... \
+  --solana-path ~/.config/corbits/keys/solana.key \
+  --rpc-url https://my.solana.rpc
+
+# Or configure Corbits with an OWS wallet
+corbits config init \
+  --network devnet \
+  --solana-address 7xKX... \
+  --solana-ows primary-solana
+
+# 2. Confirm the active config
+corbits config show
+
+# 3. Find and inspect a service
+corbits discover openai
+corbits inspect 61
+
+# 4. Probe a paid endpoint before paying
+corbits call --inspect curl https://api.example.x402.org/resource
+
+# 5. Call the endpoint when you are ready
+corbits call curl https://api.example.x402.org/resource
 ```
 
 ## Commands
@@ -61,7 +101,6 @@ corbits call curl https://api.example.x402.org/data \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"key":"value"}'
-corbits call --yes curl https://api.example.x402.org/resource
 corbits call --payment-info curl https://api.example.x402.org/resource
 corbits call --save-response curl https://api.example.x402.org/resource
 corbits call wget --method=POST https://api.example.x402.org/resource
@@ -94,9 +133,10 @@ and prints an error.
 If `spending.confirm_above_usd` is configured, Corbits inspects the selected
 payment option before signing. When the normalized USD-equivalent amount exceeds
 that threshold, `call` prompts for confirmation on an interactive terminal.
-Use `--yes` to bypass that prompt. Corbits refuses to guess when the selected
-asset cannot be normalized safely to USD, including unsupported non-USD assets,
-and tells you to inspect the challenge first instead.
+Use `--yes` only when you intentionally want to bypass that prompt, for example
+in a non-interactive script after reviewing the payment. Corbits refuses to
+guess when the selected asset cannot be normalized safely to USD, including
+unsupported non-USD assets, and tells you to inspect the challenge first instead.
 
 When `--payment-info` is set, successful paid retries also print payment
 metadata to `stderr`. By default this is a single human-readable line:
@@ -130,6 +170,22 @@ history entry. When this flag is set, Corbits buffers the paid retry before
 printing it so the response body can be persisted. This flag is not supported
 together with `curl -o/--output` or `wget -O/--output-document`, because
 Corbits would otherwise need to buffer the paid response and slow delivery.
+
+### balance
+
+Report a token balance for the configured wallet and payment network.
+
+```
+corbits balance
+corbits balance --asset USDC
+corbits balance --network mainnet-beta --address 7xKX...
+corbits balance --format json
+```
+
+By default, `balance` uses the active wallet, configured payment network, and
+that network's default payment asset. Use `--asset` with a supported symbol or
+asset address. Use `--network` and `--address` together to query a wallet
+outside the active config.
 
 ### history
 
@@ -169,6 +225,9 @@ corbits config set --rpc-url https://mainnet.base.org
 corbits config set --confirm-above-usd 0.25
 corbits config set --format yaml --api-url https://staging.corbits.dev
 ```
+
+Use `--*-path` for local keypairs and `--*-ows` for OWS wallets, replacing
+`*` with either `solana` or `evm`, for example `--solana-path` or `--evm-ows`.
 
 `config show` respects `--format` and the configured default format. Table output prints
 the derived payment and wallet summary plus a wallet table; JSON and YAML output include
@@ -236,6 +295,15 @@ pnpm install    # install dependencies
 make            # lint, build, and test
 make format     # auto-format with prettier
 make clean      # remove build artifacts
+```
+
+## Agent skill
+
+This repo includes a `corbits-cli` agent skill under `skills/corbits-cli`.
+Install it with the Skills CLI:
+
+```
+npx skills add corbits-infra/cli --skill corbits-cli
 ```
 
 ## License
