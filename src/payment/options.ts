@@ -47,6 +47,19 @@ export type PaymentRequirementInspection = {
     payTo: string;
     maxTimeoutSeconds: number;
     extra?: Record<string, unknown> | null;
+    flex?: {
+      facilitator?: string;
+      matchingSessions?: {
+        id: string;
+        status: string;
+        escrow: string;
+        onChainAvailableAmount?: string;
+        onChainVaultBalance?: string;
+        onChainPendingAmount?: string;
+        healthy: boolean;
+        reason?: string;
+      }[];
+    };
   }[];
 };
 
@@ -177,6 +190,7 @@ export function printPaymentRequirementInspection(
       "Pay To",
       "Timeout",
       "Extra",
+      "Flex Sessions",
     ],
     inspection.requirements.map((requirement) => [
       requirement.scheme,
@@ -187,6 +201,15 @@ export function printPaymentRequirementInspection(
       requirement.payTo,
       String(requirement.maxTimeoutSeconds),
       formatExtra(requirement.extra),
+      requirement.flex?.matchingSessions
+        ?.map((session) =>
+          session.healthy
+            ? `${session.id} onChainAvailable=${
+                session.onChainAvailableAmount ?? "unknown"
+              }`
+            : `${session.id} ${session.reason ?? "unhealthy"}`,
+        )
+        .join("; ") ?? "",
     ]),
   );
 }

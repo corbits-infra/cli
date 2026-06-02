@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@faremeter/flex-solana':
+        specifier: ^0.2.1
+        version: 0.2.1(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@faremeter/info':
         specifier: ^0.20.1
         version: 0.20.1
@@ -15,8 +18,8 @@ importers:
         specifier: ^0.20.1
         version: 0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@faremeter/payment-solana':
-        specifier: ^0.20.1
-        version: 0.20.1(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
+        specifier: ^0.22.0
+        version: 0.22.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@faremeter/types':
         specifier: ^0.20.1
         version: 0.20.1
@@ -24,11 +27,14 @@ importers:
         specifier: ^0.20.1
         version: 0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@faremeter/wallet-solana':
-        specifier: ^0.20.1
-        version: 0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
+        specifier: ^0.22.0
+        version: 0.22.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@open-wallet-standard/core':
         specifier: ^1.2.4
         version: 1.2.4
+      '@solana/kit':
+        specifier: ^6.7.0
+        version: 6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@solana/spl-token':
         specifier: ^0.4.13
         version: 0.4.13(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
@@ -317,31 +323,51 @@ packages:
     resolution: {integrity: sha512-iH1B076HoAshH1mLpHMgwdGeTs0CYwL0SPMkGuSebZrwBp16v415e9NZXg2jtrqPVQjf6IANe2Vtlr5KswtcZQ==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
+  '@faremeter/flex-solana@0.2.1':
+    resolution: {integrity: sha512-KW2i8O42Nv3P8etpdS7k/s44WpXmXXdFcJ1ifN0Kdhzp/OyV4SGx+uCMvbEu7WEdKtGFkf2Lax9IGY6mZ2FagA==}
+
   '@faremeter/info@0.20.1':
     resolution: {integrity: sha512-iiHNlmSwO3OxVZ73f14pqei1MbC8eLBo+OkrD+s9qPGMC/hqKLlhE1D86vPK5OQrVoQJoPwOOy/NIGVqQzHZDQ==}
 
-  '@faremeter/logs@0.20.1':
-    resolution: {integrity: sha512-dKvHWsZ5Uc3xUX2aML6kDyYHMOLg3E4AFk5wVIEtDzyGY8UN/MTOChTkQsCJMFw/71kCzkziBeBnnHn3Fo+Ddw==}
+  '@faremeter/info@0.22.0':
+    resolution: {integrity: sha512-IyAdM/ciHczopFMdZ5NYKrYWVI3xVQPcBMZzWXZh8T1NoR1rQ6NMyeSXXqHiswCU7fsQGPGNuRjiXJVx38lqWA==}
+
+  '@faremeter/logs@0.17.1':
+    resolution: {integrity: sha512-URbANx1IisTw9pGHGswPKOnLAU0FUgnfMYwgMmjkLsqHqYebeAPOnVVGu3SDGgyNudNz0iiLnIfG6sXfZvM0YQ==}
     peerDependencies:
       '@logtape/logtape': 1.0.4
     peerDependenciesMeta:
       '@logtape/logtape':
         optional: true
 
+  '@faremeter/logs@0.22.0':
+    resolution: {integrity: sha512-FFI+voKD48BjNEbDm/XvlsPlFEkNV9B6NLoRRwZuJq3np7vgW5PsDbcjIbghvKx3hNXwr2/p7oUrc8SMqoNA5Q==}
+    peerDependencies:
+      '@logtape/logtape': 1.0.4
+    peerDependenciesMeta:
+      '@logtape/logtape':
+        optional: true
+
+  '@faremeter/middleware@0.22.0':
+    resolution: {integrity: sha512-v5u9C/FKeRrafw+/tjjUDP5hDW3UVkGa83AC2bESzJzUMAkQ7IQiZ3Pz6maRdouuNaFP65Hboppd8+Tmk5Qw1w==}
+
   '@faremeter/payment-evm@0.20.1':
     resolution: {integrity: sha512-uFwG3L9+/iv8iRlsBT1tQT8Y2vBtAbUB/5pfKi8gaPM2GMZHr16xUQUjEFRbZaF1i/yONMVzORtpx7pw/3HrwQ==}
 
-  '@faremeter/payment-solana@0.20.1':
-    resolution: {integrity: sha512-YTT7VseHE2v3cO/TOJlGFfRdqDWXkJHmguq7O3F/Xwpa1Y0vLS/hoMFXVZln5twSJr5eMllgfCOLxg+Ua/0hwQ==}
+  '@faremeter/payment-solana@0.22.0':
+    resolution: {integrity: sha512-EI0jnTVM4vbZSCexbRJhZMcQHswVPzAVn7UjEgd6wtp5Ptvj6UnAW56sqppN4eStKs+6oOPTRfveCz+dxNpicg==}
 
   '@faremeter/types@0.20.1':
     resolution: {integrity: sha512-WVHNatru35alGIs4qPNWtjqzfDl4XVm1z6Gm91GgfSPybV94qZqxUOcpYF12s3E6OMoXvRdcah71/3qbIrkRDw==}
 
+  '@faremeter/types@0.22.0':
+    resolution: {integrity: sha512-OrIw/AIkLzt0W/CZz0RRPQyP5IJfo/bxMUZgyk7DKwFOg0HP/lL7J9p5wMruqVzEhADB9/FAKJ3vaOtlTQ6xhA==}
+
   '@faremeter/wallet-evm@0.20.1':
     resolution: {integrity: sha512-dSfN3qH+7AZ7NPBQ8bsb+EXeEDdzZsSCZtOe6oPUk2baimXVd2rLK0pHhj8TfU3213e5BQp0AzZpb474Hb3SVQ==}
 
-  '@faremeter/wallet-solana@0.20.1':
-    resolution: {integrity: sha512-yqq41c8w/Em9CUEMvMlG/r74vG9fAie8UQ5+7JJhu4WNUHUbGZV9QJli1sY+vPssShr9bEQLocs9itPSqHOviQ==}
+  '@faremeter/wallet-solana@0.22.0':
+    resolution: {integrity: sha512-rjnRIRLJveOnhiQWsnl5hQlT92XD/isYpvz+kzZcs9vD4nDgp7U2vPUs8CvqcIOee1Cl7o8YXtt+khmyBohc6w==}
 
   '@gar/promise-retry@1.0.3':
     resolution: {integrity: sha512-GmzA9ckNokPypTg10pgpeHNQe7ph+iIKKmhKu3Ob9ANkswreCx7R3cKmY781K8QK3AqVL3xVh9A42JvIAbkkSA==}
@@ -950,12 +976,6 @@ packages:
 
   '@solana/spl-token@0.4.13':
     resolution: {integrity: sha512-cite/pYWQZZVvLbg5lsodSovbetK/eA24gaR0eeUeMuBAMNrT8XFCwaygKy0N2WSg3gSyjjNpIeAGBAKZaY/1w==}
-    engines: {node: '>=16'}
-    peerDependencies:
-      '@solana/web3.js': ^1.95.5
-
-  '@solana/spl-token@0.4.14':
-    resolution: {integrity: sha512-u09zr96UBpX4U685MnvQsNzlvw9TiY005hk1vJmJr7gMJldoPG1eYU5/wNEyOA5lkMLiR/gOi9SFD4MefOYEsA==}
     engines: {node: '>=16'}
     peerDependencies:
       '@solana/web3.js': ^1.95.5
@@ -1739,6 +1759,10 @@ packages:
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
+
+  hono@4.9.0:
+    resolution: {integrity: sha512-JAUc4Sqi3lhby2imRL/67LMcJFKiCu7ZKghM7iwvltVZzxEC5bVJCsAa4NTnSfmWGb+N2eOVtFE586R+K3fejA==}
+    engines: {node: '>=16.9.0'}
 
   hosted-git-info@9.0.2:
     resolution: {integrity: sha512-M422h7o/BR3rmCQ8UHi7cyyMqKltdP9Uo+J2fXK+RSAY+wTcKOIRyhTuKv4qn+DJf3g+PL890AzId5KZpX+CBg==}
@@ -2717,12 +2741,41 @@ snapshots:
       '@eslint/core': 1.1.1
       levn: 0.4.1
 
+  '@faremeter/flex-solana@0.2.1(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
+    dependencies:
+      '@faremeter/logs': 0.17.1
+      '@solana/kit': 6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
+      '@solana/program-client-core': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
+      arktype: 2.2.0
+    transitivePeerDependencies:
+      - '@logtape/logtape'
+      - bufferutil
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
   '@faremeter/info@0.20.1':
     dependencies:
       '@faremeter/types': 0.20.1
       arktype: 2.1.21
 
-  '@faremeter/logs@0.20.1': {}
+  '@faremeter/info@0.22.0':
+    dependencies:
+      '@faremeter/types': 0.22.0
+      arktype: 2.2.0
+
+  '@faremeter/logs@0.17.1': {}
+
+  '@faremeter/logs@0.22.0': {}
+
+  '@faremeter/middleware@0.22.0':
+    dependencies:
+      '@faremeter/info': 0.22.0
+      '@faremeter/logs': 0.22.0
+      '@faremeter/types': 0.22.0
+      arktype: 2.2.0
+    transitivePeerDependencies:
+      - '@logtape/logtape'
 
   '@faremeter/payment-evm@0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
@@ -2736,11 +2789,13 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@faremeter/payment-solana@0.20.1(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
+  '@faremeter/payment-solana@0.22.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
-      '@faremeter/info': 0.20.1
-      '@faremeter/logs': 0.20.1
-      '@faremeter/types': 0.20.1
+      '@faremeter/flex-solana': 0.2.1(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
+      '@faremeter/info': 0.22.0
+      '@faremeter/logs': 0.22.0
+      '@faremeter/middleware': 0.22.0
+      '@faremeter/types': 0.22.0
       '@solana-program/compute-budget': 0.15.0(@solana/kit@6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6))
       '@solana-program/memo': 0.11.0(@solana/kit@6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6))
       '@solana-program/system': 0.12.0(@solana/kit@6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6))
@@ -2750,14 +2805,12 @@ snapshots:
       '@solana/rpc': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
       '@solana/rpc-api': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
       '@solana/rpc-types': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
-      '@solana/spl-token': 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
       '@solana/transactions': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
-      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
-      arktype: 2.1.21
+      arktype: 2.2.0
+      hono: 4.9.0
     transitivePeerDependencies:
       - '@logtape/logtape'
       - bufferutil
-      - encoding
       - fastestsmallesttextencoderdecoder
       - typescript
       - utf-8-validate
@@ -2765,6 +2818,10 @@ snapshots:
   '@faremeter/types@0.20.1':
     dependencies:
       arktype: 2.1.21
+
+  '@faremeter/types@0.22.0':
+    dependencies:
+      arktype: 2.2.0
 
   '@faremeter/wallet-evm@0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
@@ -2776,12 +2833,15 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@faremeter/wallet-solana@0.20.1(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)':
+  '@faremeter/wallet-solana@0.22.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
-      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
+      '@faremeter/logs': 0.22.0
+      '@solana/kit': 6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)
+      '@solana/transactions': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
     transitivePeerDependencies:
+      - '@logtape/logtape'
       - bufferutil
-      - encoding
+      - fastestsmallesttextencoderdecoder
       - typescript
       - utf-8-validate
 
@@ -3509,21 +3569,6 @@ snapshots:
       - typescript
 
   '@solana/spl-token@0.4.13(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
-    dependencies:
-      '@solana/buffer-layout': 4.0.1
-      '@solana/buffer-layout-utils': 0.2.0(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
-      '@solana/spl-token-group': 0.0.7(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
-      '@solana/spl-token-metadata': 0.1.6(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)
-      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
-      buffer: 6.0.3
-    transitivePeerDependencies:
-      - bufferutil
-      - encoding
-      - fastestsmallesttextencoderdecoder
-      - typescript
-      - utf-8-validate
-
-  '@solana/spl-token@0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.2)(utf-8-validate@6.0.6)':
     dependencies:
       '@solana/buffer-layout': 4.0.1
       '@solana/buffer-layout-utils': 0.2.0(bufferutil@4.1.0)(typescript@6.0.2)(utf-8-validate@6.0.6)
@@ -4501,6 +4546,8 @@ snapshots:
   graceful-fs@4.2.11: {}
 
   has-flag@4.0.0: {}
+
+  hono@4.9.0: {}
 
   hosted-git-info@9.0.2:
     dependencies:

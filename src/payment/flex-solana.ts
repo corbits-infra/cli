@@ -1,0 +1,790 @@
+import fs from "node:fs/promises";
+
+import {
+  type Address,
+  type Instruction,
+  type KeyPairSigner,
+  type Signature,
+  appendTransactionMessageInstructions,
+  createKeyPairSignerFromBytes,
+  createSolanaRpc,
+  createTransactionMessage,
+  getAddressFromPublicKey,
+  getBase64EncodedWireTransaction,
+  pipe,
+  setTransactionMessageFeePayerSigner,
+  setTransactionMessageLifetimeUsingBlockhash,
+  signTransactionMessageWithSigners,
+} from "@solana/kit";
+import {
+  fetchEscrowAccount,
+  fetchSessionKey,
+  findPendingSettlementsByEscrow,
+  findVaultPda,
+  getCreateEscrowInstructionAsync,
+  getDepositInstructionAsync,
+  getRegisterSessionKeyInstructionAsync,
+} from "@faremeter/flex-solana";
+import { createPaymentHandler as createFlexPaymentHandler } from "@faremeter/payment-solana/flex/client";
+import type { PaymentHandler } from "@faremeter/types/client";
+import {
+  V2_PAYMENT_HEADER,
+  type x402PaymentPayload,
+} from "@faremeter/types/x402v2";
+
+import { ConfigError, type ResolvedConfig } from "../config/index.js";
+import type { RetryHeader } from "../process/wrapped-client.js";
+import {
+  applyFlexDeposit,
+  compareBaseUnitAmounts,
+  createFlexSessionRecord,
+  findMatchingFlexSessions,
+  formatFlexRequirementMismatch,
+  generateFlexSessionKeyPair,
+  getConfiguredSolanaNetwork,
+  readFlexSessionKeyPair,
+  readFlexSessionStore,
+  selectFlexRequirement,
+  subtractBaseUnits,
+  toSolanaAddress,
+  upsertFlexSessionRecord,
+  writeFlexSessionKeyMaterial,
+  type FlexRequirementDetails,
+  type FlexSessionHealth,
+  type FlexSessionRecord,
+  type FlexSessionRuntimeView,
+} from "./flex.js";
+
+const MIN_REFUND_TIMEOUT_SLOTS = 150n;
+const DEFAULT_REFUND_TIMEOUT_SLOTS = 300n;
+const MIN_DEADMAN_TIMEOUT_SLOTS = 1_000n;
+const DEFAULT_DEADMAN_TIMEOUT_SLOTS = 100_000n;
+const DEFAULT_MAX_SESSION_KEYS = 10;
+
+type SolanaRpc = ReturnType<typeof createSolanaRpc>;
+type FlexReadRpc = Parameters<typeof fetchEscrowAccount>[0];
+type FlexPaymentHandlerRpc = Parameters<
+  typeof createFlexPaymentHandler
+>[0]["rpc"];
+
+function asFlexReadRpc(rpc: SolanaRpc): FlexReadRpc {
+  return rpc as unknown as FlexReadRpc;
+}
+
+function asFlexPaymentHandlerRpc(rpc: SolanaRpc): FlexPaymentHandlerRpc {
+  return rpc as unknown as FlexPaymentHandlerRpc;
+}
+
+export type FlexPaymentMetadata = {
+  amount: string;
+  asset: string;
+  assetSymbol?: string;
+  network: string;
+  decimals?: number;
+  sessionId: string;
+  escrow: string;
+};
+
+export type FlexPaymentRetryHeaderResult = {
+  detectedVersion: 2;
+  header: RetryHeader;
+  paymentInfo: FlexPaymentMetadata;
+};
+
+export type EnsureFlexSessionArgs = {
+  config: ResolvedConfig;
+  requirement: FlexRequirementDetails;
+  amount: string;
+  sessionId?: string;
+  allowCreateOrTopup: boolean;
+  confirm?: (args: FlexConfirmArgs) => Promise<boolean>;
+  note?: (message: string) => void;
+  storePath?: string;
+};
+
+export type FlexConfirmArgs =
+  | {
+      kind: "create";
+      amount: string;
+      requirement: FlexRequirementDetails;
+    }
+  | {
+      kind: "topup";
+      amount: string;
+      session: FlexSessionRecord;
+      requirement: FlexRequirementDetails;
+    };
+
+export type FlexSolanaDeps = {
+  readTextFile: (path: string, encoding: BufferEncoding) => Promise<string>;
+  createRpc: (rpcURL: string) => SolanaRpc;
+  createFlexPaymentHandler: typeof createFlexPaymentHandler;
+  now: () => number;
+};
+
+export type EnsureFlexSessionResult = {
+  session: FlexSessionRecord;
+  availableAmount: string;
+  created: boolean;
+  toppedUpAmount?: string;
+};
+
+export type BuildFlexPaymentRetryHeaderArgs = {
+  config: ResolvedConfig;
+  response: Response;
+  url: string;
+  requestInit: RequestInit;
+  sessionId?: string;
+  allowCreateOrTopup: boolean;
+  confirm?: EnsureFlexSessionArgs["confirm"];
+  note?: EnsureFlexSessionArgs["note"];
+  storePath?: string;
+};
+
+function parseSolanaSecretKey(value: string): Uint8Array {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ConfigError(
+      "configured Solana keypair file does not contain valid JSON",
+    );
+  }
+
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((item) => !Number.isInteger(item))
+  ) {
+    throw new ConfigError(
+      "configured Solana keypair file must contain an array of secret key bytes",
+    );
+  }
+
+  return Uint8Array.from(parsed);
+}
+
+async function loadOwnerSigner(
+  config: ResolvedConfig,
+  deps: Pick<FlexSolanaDeps, "readTextFile">,
+): Promise<KeyPairSigner> {
+  if (
+    config.activeWallet.kind !== "keypair" ||
+    config.activeWallet.family !== "solana"
+  ) {
+    throw new ConfigError(
+      "Flex payments currently require an active Solana keypair wallet",
+    );
+  }
+
+  const secret = await deps.readTextFile(
+    config.activeWallet.expandedPath,
+    "utf8",
+  );
+  return createKeyPairSignerFromBytes(parseSolanaSecretKey(secret));
+}
+
+async function confirmSignature(rpc: SolanaRpc, sig: Signature): Promise<void> {
+  for (let i = 0; i < 60; i += 1) {
+    const { value: statuses } = await rpc.getSignatureStatuses([sig]).send();
+    const status = statuses[0];
+    if (
+      status?.confirmationStatus === "confirmed" ||
+      status?.confirmationStatus === "finalized"
+    ) {
+      if (status.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
+      }
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("Transaction confirmation timeout");
+}
+
+async function sendInstructions(
+  rpc: SolanaRpc,
+  feePayer: KeyPairSigner,
+  instructions: Instruction[],
+): Promise<void> {
+  const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+  const message = pipe(
+    createTransactionMessage({ version: 0 }),
+    (m) => setTransactionMessageFeePayerSigner(feePayer, m),
+    (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
+    (m) => appendTransactionMessageInstructions(instructions, m),
+  );
+  const signedTransaction = await signTransactionMessageWithSigners(message);
+  const wireTransaction = getBase64EncodedWireTransaction(signedTransaction);
+  const signature = await rpc
+    .sendTransaction(wireTransaction, { encoding: "base64" })
+    .send();
+  await confirmSignature(rpc, signature);
+}
+
+async function findOwnerTokenAccount(args: {
+  rpc: SolanaRpc;
+  owner: Address;
+  mint: Address;
+}): Promise<Address> {
+  const { value: tokenAccounts } = await args.rpc
+    .getTokenAccountsByOwner(
+      args.owner,
+      { mint: args.mint },
+      { encoding: "base64" },
+    )
+    .send();
+  const firstAccount = tokenAccounts[0];
+  if (firstAccount == null) {
+    throw new Error(
+      `No token account found for mint ${args.mint}. Fund the configured wallet before creating or topping up a Flex session.`,
+    );
+  }
+  return firstAccount.pubkey;
+}
+
+async function getTokenAccountBalance(
+  rpc: SolanaRpc,
+  tokenAccount: Address,
+): Promise<string> {
+  try {
+    const { value } = await rpc.getTokenAccountBalance(tokenAccount).send();
+    return value.amount;
+  } catch {
+    return "0";
+  }
+}
+
+async function getSessionHealth(
+  rpc: SolanaRpc,
+  session: FlexSessionRecord,
+  requiredAmount: string,
+): Promise<FlexSessionHealth> {
+  const escrowAddress = toSolanaAddress(session.escrow);
+  const escrow = await fetchEscrowAccount(asFlexReadRpc(rpc), escrowAddress);
+  if (escrow == null) {
+    return { kind: "unhealthy", session, reason: "escrow not found on-chain" };
+  }
+
+  const sessionKey = await fetchSessionKey(
+    asFlexReadRpc(rpc),
+    toSolanaAddress(session.session_key_account),
+  );
+  if (sessionKey == null) {
+    return {
+      kind: "unhealthy",
+      session,
+      reason: "session key account not found on-chain",
+    };
+  }
+  if (!sessionKey.active) {
+    return { kind: "unhealthy", session, reason: "session key is not active" };
+  }
+
+  const pending = await findPendingSettlementsByEscrow(
+    asFlexReadRpc(rpc),
+    escrowAddress,
+  );
+  const pendingAmount = pending
+    .reduce((sum, entry) => sum + entry.account.amount, 0n)
+    .toString();
+  const [vaultAddress] = await findVaultPda({
+    escrow: escrowAddress,
+    mint: toSolanaAddress(session.mint),
+  });
+  const vaultBalance = await getTokenAccountBalance(rpc, vaultAddress);
+  const availableAmount = subtractBaseUnits(vaultBalance, pendingAmount);
+
+  if (compareBaseUnitAmounts(availableAmount, requiredAmount) >= 0) {
+    return {
+      kind: "healthy",
+      session,
+      availableAmount,
+      vaultBalanceAmount: vaultBalance,
+      pendingAmount,
+    };
+  }
+
+  return {
+    kind: "underfunded",
+    session,
+    availableAmount,
+    vaultBalanceAmount: vaultBalance,
+    pendingAmount,
+    shortfallAmount: subtractBaseUnits(requiredAmount, availableAmount),
+  };
+}
+
+export async function getFlexSessionViews(args: {
+  config: ResolvedConfig;
+  requirement?: FlexRequirementDetails;
+  storePath?: string;
+  deps?: Partial<FlexSolanaDeps>;
+}): Promise<FlexSessionRuntimeView[]> {
+  const deps = { ...defaultFlexSolanaDeps, ...args.deps };
+  const store = await readFlexSessionStore(args.storePath);
+  const sessions =
+    args.requirement == null
+      ? store.sessions
+      : findMatchingFlexSessions({
+          sessions: store.sessions,
+          ownerAddress: args.config.activeWallet.address,
+          network: args.requirement.network,
+          mint: args.requirement.asset,
+          facilitator: args.requirement.facilitator,
+        });
+
+  const rpc = deps.createRpc(args.config.payment.rpcURL);
+  const views: FlexSessionRuntimeView[] = [];
+  for (const session of sessions) {
+    try {
+      const health = await getSessionHealth(rpc, session, "0");
+      if (health.kind === "unhealthy") {
+        views.push({ session, healthy: false, reason: health.reason });
+      } else {
+        views.push({
+          session,
+          healthy: true,
+          availableAmount: health.availableAmount,
+          vaultBalanceAmount: health.vaultBalanceAmount,
+          pendingAmount: health.pendingAmount,
+        });
+      }
+    } catch (err) {
+      views.push({
+        session,
+        healthy: false,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return views;
+}
+
+async function chooseExistingSession(args: {
+  config: ResolvedConfig;
+  requirement: FlexRequirementDetails;
+  requiredAmount: string;
+  sessionId?: string;
+  confirm?: EnsureFlexSessionArgs["confirm"];
+  rpc: SolanaRpc;
+  storePath?: string;
+}): Promise<FlexSessionHealth | null> {
+  const store = await readFlexSessionStore(args.storePath);
+  const matching = findMatchingFlexSessions({
+    sessions: store.sessions,
+    ownerAddress: args.config.activeWallet.address,
+    network: args.requirement.network,
+    mint: args.requirement.asset,
+    facilitator: args.requirement.facilitator,
+  });
+  const candidates =
+    args.sessionId == null
+      ? matching
+      : matching.filter((session) => session.id === args.sessionId);
+
+  if (args.sessionId != null && candidates.length === 0) {
+    throw new Error(
+      `Flex session ${args.sessionId} was not found or does not match this challenge`,
+    );
+  }
+
+  const healths = await Promise.all(
+    candidates.map((session) =>
+      getSessionHealth(args.rpc, session, args.requiredAmount),
+    ),
+  );
+  const usable = healths.filter((health) => health.kind !== "unhealthy");
+
+  if (args.sessionId != null) {
+    const selected = usable[0];
+    if (selected == null) {
+      const unhealthy = healths[0];
+      throw new Error(
+        unhealthy?.kind === "unhealthy"
+          ? `Flex session ${args.sessionId} is not usable: ${unhealthy.reason}`
+          : `Flex session ${args.sessionId} is not usable`,
+      );
+    }
+    return selected;
+  }
+
+  const fullyFunded = usable.filter((health) => health.kind === "healthy");
+  if (fullyFunded.length === 1) {
+    return fullyFunded[0] ?? null;
+  }
+  if (fullyFunded.length > 1) {
+    throw new Error(
+      "Multiple matching Flex sessions are available; rerun with --flex-session <id>",
+    );
+  }
+
+  if (usable.length === 1) {
+    return usable[0] ?? null;
+  }
+  if (usable.length > 1) {
+    throw new Error(
+      "Multiple underfunded Flex sessions match this challenge; rerun with --flex-session <id>",
+    );
+  }
+  return null;
+}
+
+async function topUpSession(args: {
+  config: ResolvedConfig;
+  owner: KeyPairSigner;
+  rpc: SolanaRpc;
+  session: FlexSessionRecord;
+  mint: string;
+  amount: string;
+  storePath?: string;
+}): Promise<FlexSessionRecord> {
+  const mint = toSolanaAddress(args.mint);
+  const sourceTokenAccount = await findOwnerTokenAccount({
+    rpc: args.rpc,
+    owner: args.owner.address,
+    mint,
+  });
+  const depositIx = await getDepositInstructionAsync({
+    depositor: args.owner,
+    escrow: toSolanaAddress(args.session.escrow),
+    mint,
+    source: sourceTokenAccount,
+    amount: BigInt(args.amount),
+  });
+  await sendInstructions(args.rpc, args.owner, [depositIx]);
+  const updated = applyFlexDeposit(args.session, args.amount);
+  await upsertFlexSessionRecord(updated, args.storePath);
+  return updated;
+}
+
+async function createSession(args: {
+  config: ResolvedConfig;
+  owner: KeyPairSigner;
+  rpc: SolanaRpc;
+  requirement: FlexRequirementDetails;
+  amount: string;
+  storePath?: string;
+}): Promise<FlexSessionRecord> {
+  const mint = toSolanaAddress(args.requirement.asset);
+  const sourceTokenAccount = await findOwnerTokenAccount({
+    rpc: args.rpc,
+    owner: args.owner.address,
+    mint,
+  });
+  const { refundTimeoutSlots, deadmanTimeoutSlots } = getFlexEscrowTimeoutSlots(
+    args.requirement.minGracePeriodSlots,
+  );
+  const createIx = await getCreateEscrowInstructionAsync({
+    owner: args.owner,
+    index: BigInt(Date.now()),
+    facilitator: toSolanaAddress(args.requirement.facilitator),
+    refundTimeoutSlots,
+    deadmanTimeoutSlots,
+    maxSessionKeys: DEFAULT_MAX_SESSION_KEYS,
+  });
+  const escrowMeta = createIx.accounts[1];
+  if (escrowMeta == null) {
+    throw new Error("escrow account meta missing");
+  }
+  const escrowAddress = escrowMeta.address;
+  await sendInstructions(args.rpc, args.owner, [createIx]);
+
+  const depositIx = await getDepositInstructionAsync({
+    depositor: args.owner,
+    escrow: escrowAddress,
+    mint,
+    source: sourceTokenAccount,
+    amount: BigInt(args.amount),
+  });
+  await sendInstructions(args.rpc, args.owner, [depositIx]);
+
+  const sessionKeyPair = await generateFlexSessionKeyPair();
+  const sessionKeyAddress = await getAddressFromPublicKey(
+    sessionKeyPair.publicKey,
+  );
+  const registerIx = await getRegisterSessionKeyInstructionAsync({
+    owner: args.owner,
+    escrow: escrowAddress,
+    sessionKey: sessionKeyAddress,
+    expiresAtSlot: null,
+    revocationGracePeriodSlots: args.requirement.minGracePeriodSlots,
+  });
+  const sessionKeyMeta = registerIx.accounts[2];
+  if (sessionKeyMeta == null) {
+    throw new Error("session key account meta missing");
+  }
+
+  const record = await createFlexSessionRecord({
+    ownerAddress: args.config.activeWallet.address,
+    network: args.requirement.network,
+    mint: args.requirement.asset,
+    facilitator: args.requirement.facilitator,
+    escrow: escrowAddress,
+    sessionKeyAddress,
+    sessionKeyAccount: sessionKeyMeta.address,
+    depositedAmount: args.amount,
+    ...(args.storePath == null ? {} : { storePath: args.storePath }),
+  });
+  await writeFlexSessionKeyMaterial(record, sessionKeyPair);
+  await sendInstructions(args.rpc, args.owner, [registerIx]);
+  return record;
+}
+
+export function getFlexEscrowTimeoutSlots(minGracePeriodSlots: bigint): {
+  refundTimeoutSlots: bigint;
+  deadmanTimeoutSlots: bigint;
+} {
+  const refundTimeoutSlots = maxBigInt(
+    DEFAULT_REFUND_TIMEOUT_SLOTS,
+    MIN_REFUND_TIMEOUT_SLOTS,
+    minGracePeriodSlots + 1n,
+  );
+  const deadmanTimeoutSlots = maxBigInt(
+    DEFAULT_DEADMAN_TIMEOUT_SLOTS,
+    MIN_DEADMAN_TIMEOUT_SLOTS,
+    refundTimeoutSlots * 2n,
+  );
+  return { refundTimeoutSlots, deadmanTimeoutSlots };
+}
+
+function maxBigInt(first: bigint, ...rest: bigint[]): bigint {
+  return rest.reduce((max, value) => (value > max ? value : max), first);
+}
+
+export async function ensureFlexSession(
+  args: EnsureFlexSessionArgs,
+  depsOverride: Partial<FlexSolanaDeps> = {},
+): Promise<EnsureFlexSessionResult> {
+  if (args.config.payment.family !== "solana") {
+    throw new ConfigError(
+      "Flex payments are only supported on Solana networks",
+    );
+  }
+  const deps = { ...defaultFlexSolanaDeps, ...depsOverride };
+  const rpc = deps.createRpc(args.config.payment.rpcURL);
+  const owner = await loadOwnerSigner(args.config, deps);
+  const targetAmount = args.amount;
+  const selected = await chooseExistingSession({
+    config: args.config,
+    requirement: args.requirement,
+    requiredAmount: targetAmount,
+    ...(args.sessionId == null ? {} : { sessionId: args.sessionId }),
+    ...(args.confirm == null ? {} : { confirm: args.confirm }),
+    rpc,
+    ...(args.storePath == null ? {} : { storePath: args.storePath }),
+  });
+
+  if (selected?.kind === "healthy") {
+    args.note?.(`Using Flex session ${selected.session.id}`);
+    return {
+      session: selected.session,
+      availableAmount: selected.availableAmount,
+      created: false,
+    };
+  }
+
+  if (selected?.kind === "underfunded") {
+    const topupAmount = selected.shortfallAmount;
+    if (!args.allowCreateOrTopup) {
+      throw new Error(
+        `Flex session ${selected.session.id} needs a top-up of ${topupAmount}; rerun with --yes and --flex-authorize-current`,
+      );
+    }
+    if (
+      args.confirm != null &&
+      !(await args.confirm({
+        kind: "topup",
+        amount: topupAmount,
+        session: selected.session,
+        requirement: args.requirement,
+      }))
+    ) {
+      throw new Error("Flex top-up cancelled");
+    }
+    args.note?.(
+      `Topping up Flex session ${selected.session.id} by ${topupAmount}`,
+    );
+    const session = await topUpSession({
+      config: args.config,
+      owner,
+      rpc,
+      session: selected.session,
+      mint: args.requirement.asset,
+      amount: topupAmount,
+      ...(args.storePath == null ? {} : { storePath: args.storePath }),
+    });
+    return {
+      session,
+      availableAmount: targetAmount,
+      created: false,
+      toppedUpAmount: topupAmount,
+    };
+  }
+
+  if (!args.allowCreateOrTopup) {
+    throw new Error(
+      "No funded Flex session matches this challenge; rerun with --yes and --flex-authorize-current",
+    );
+  }
+  if (
+    args.confirm != null &&
+    !(await args.confirm({
+      kind: "create",
+      amount: targetAmount,
+      requirement: args.requirement,
+    }))
+  ) {
+    throw new Error("Flex session creation cancelled");
+  }
+  args.note?.(`Creating Flex session with deposit ${targetAmount}`);
+  const session = await createSession({
+    config: args.config,
+    owner,
+    rpc,
+    requirement: args.requirement,
+    amount: targetAmount,
+    ...(args.storePath == null ? {} : { storePath: args.storePath }),
+  });
+  return {
+    session,
+    availableAmount: targetAmount,
+    created: true,
+  };
+}
+
+export async function buildFlexPaymentRetryHeader(
+  args: BuildFlexPaymentRetryHeaderArgs,
+  depsOverride: Partial<FlexSolanaDeps> = {},
+): Promise<FlexPaymentRetryHeaderResult> {
+  const { extractPaymentRequiredResponse } = await import("./signer.js");
+  const paymentRequired = await extractPaymentRequiredResponse(
+    args.response,
+    args.url,
+  );
+  if (paymentRequired.detectedVersion !== 2) {
+    throw new Error(
+      "Flex payments require an x402 v2 PAYMENT-REQUIRED challenge",
+    );
+  }
+  const selection = selectFlexRequirement({
+    accepts: paymentRequired.accepts,
+    config: args.config,
+  });
+  if (selection.kind !== "selected") {
+    throw new Error(formatFlexRequirementMismatch(args.config, selection));
+  }
+
+  const ensured = await ensureFlexSession(
+    {
+      config: args.config,
+      requirement: selection.selected,
+      amount: selection.selected.amount,
+      ...(args.sessionId == null ? {} : { sessionId: args.sessionId }),
+      allowCreateOrTopup: args.allowCreateOrTopup,
+      ...(args.confirm == null ? {} : { confirm: args.confirm }),
+      ...(args.note == null ? {} : { note: args.note }),
+      ...(args.storePath == null ? {} : { storePath: args.storePath }),
+    },
+    depsOverride,
+  );
+  const deps = { ...defaultFlexSolanaDeps, ...depsOverride };
+  const rpc = deps.createRpc(args.config.payment.rpcURL);
+  const sessionKeyPair = await readFlexSessionKeyPair(ensured.session);
+  const handler: PaymentHandler = deps.createFlexPaymentHandler({
+    network: selection.selected.network,
+    escrow: toSolanaAddress(ensured.session.escrow),
+    mint: toSolanaAddress(selection.selected.asset),
+    sessionKeyPair,
+    sessionKeyAddress: toSolanaAddress(ensured.session.session_key_address),
+    rpc: asFlexPaymentHandlerRpc(rpc),
+  });
+  const execers = await handler(
+    { request: new Request(args.url, args.requestInit) },
+    [selection.selected.requirement],
+  );
+  const execer = execers[0];
+  if (execer == null) {
+    throw new Error("failed to build a Flex payment authorization");
+  }
+  const { payload } = await execer.exec();
+  const header = {
+    name: V2_PAYMENT_HEADER,
+    value: Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        accepted: execer.requirements,
+        payload,
+        ...(paymentRequired.resource == null
+          ? {}
+          : { resource: paymentRequired.resource }),
+      } satisfies x402PaymentPayload),
+      "utf8",
+    ).toString("base64"),
+  };
+
+  return {
+    detectedVersion: 2,
+    header,
+    paymentInfo: {
+      amount: execer.requirements.amount,
+      asset: execer.requirements.asset,
+      ...(selection.selected.symbol == null
+        ? {}
+        : { assetSymbol: selection.selected.symbol }),
+      network: execer.requirements.network,
+      ...(selection.selected.decimals == null
+        ? {}
+        : { decimals: selection.selected.decimals }),
+      sessionId: ensured.session.id,
+      escrow: ensured.session.escrow,
+    },
+  };
+}
+
+export async function topUpFlexSession(args: {
+  config: ResolvedConfig;
+  session: FlexSessionRecord;
+  amount: string;
+  storePath?: string;
+  note?: (message: string) => void;
+}): Promise<FlexSessionRecord> {
+  if (args.config.payment.family !== "solana") {
+    throw new ConfigError(
+      "Flex payments are only supported on Solana networks",
+    );
+  }
+  if (args.session.status !== "open") {
+    throw new Error(`Flex session ${args.session.id} is not open`);
+  }
+  if (args.session.owner_address !== args.config.activeWallet.address) {
+    throw new Error(
+      `Flex session ${args.session.id} belongs to ${args.session.owner_address}, not the active wallet`,
+    );
+  }
+  const activeNetwork = getConfiguredSolanaNetwork(args.config);
+  if (args.session.network !== activeNetwork) {
+    throw new Error(
+      `Flex session ${args.session.id} is for ${args.session.network}, not ${activeNetwork}`,
+    );
+  }
+
+  const rpc = defaultFlexSolanaDeps.createRpc(args.config.payment.rpcURL);
+  const owner = await loadOwnerSigner(args.config, defaultFlexSolanaDeps);
+  args.note?.(`Topping up Flex session ${args.session.id} by ${args.amount}`);
+  return topUpSession({
+    config: args.config,
+    owner,
+    rpc,
+    session: args.session,
+    mint: args.session.mint,
+    amount: args.amount,
+    ...(args.storePath == null ? {} : { storePath: args.storePath }),
+  });
+}
+
+export const defaultFlexSolanaDeps: FlexSolanaDeps = {
+  readTextFile: fs.readFile,
+  createRpc: createSolanaRpc,
+  createFlexPaymentHandler,
+  now: Date.now,
+};

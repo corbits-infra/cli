@@ -59,6 +59,8 @@ export type PaymentMetadata = {
   network: string;
   decimals?: number;
   txSignature?: string;
+  flexSessionId?: string;
+  flexEscrow?: string;
 };
 
 export type PaymentRetryHeaderResult = {
@@ -150,14 +152,6 @@ type PaymentHandlerStrategy = {
     deps: BuildPaymentHandlerDeps,
   ) => Promise<PaymentHandlerInfo>;
 };
-
-const SOLANA_PAYMENT_HANDLER_OPTIONS = {
-  token: {
-    // Some x402 facilitators use PDA-owned settlement addresses as `payTo`.
-    // SPL ATA derivation must allow off-curve owners for those recipients.
-    allowOwnerOffCurve: true,
-  },
-} as const;
 
 function resolveSolanaPaymentInfo(
   config: ResolvedConfig,
@@ -271,14 +265,12 @@ async function buildSolanaKeypairHandler(
     paymentInfo.cluster,
     keypair,
   );
-  const connection = deps.createConnection(config.payment.rpcURL);
 
   return {
     handler: deps.createSolanaPaymentHandler(
       wallet,
       paymentInfo.mint,
-      connection,
-      SOLANA_PAYMENT_HANDLER_OPTIONS,
+      config.payment.rpcURL,
     ),
     network: paymentInfo.network,
   };
