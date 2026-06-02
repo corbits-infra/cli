@@ -1155,7 +1155,10 @@ await t.test("payment signer", async (t) => {
       buildOwsPaymentHandler: async () => {
         throw new Error("should not build OWS handler");
       },
-      createSolanaLocalWallet: async (network, loadedKeypair) => {
+      createSolanaLocalWallet: (async (
+        network: string,
+        loadedKeypair: Keypair,
+      ) => {
         seenWalletArgs = {
           network,
           publicKey: loadedKeypair.publicKey.toBase58(),
@@ -1163,10 +1166,10 @@ await t.test("payment signer", async (t) => {
         return {
           network,
           publicKey: loadedKeypair.publicKey,
-          partiallySignTransaction: async (tx) => tx,
-          updateTransaction: async (tx) => tx,
-        };
-      },
+          partiallySignTransaction: async (tx: unknown) => tx,
+          updateTransaction: async (tx: unknown) => tx,
+        } as never;
+      }) as never,
       createEvmLocalWallet: async () => {
         throw new Error("should not build an EVM wallet");
       },
@@ -1196,9 +1199,7 @@ await t.test("payment signer", async (t) => {
       network: "devnet",
       publicKey: keypair.publicKey.toBase58(),
     });
-    t.same(seenPaymentHandlerOptions, {
-      token: { allowOwnerOffCurve: true },
-    });
+    t.equal(seenPaymentHandlerOptions, undefined);
     t.equal(built.network, "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
   });
 
@@ -1333,9 +1334,7 @@ await t.test("OWS payment handlers", async (t) => {
       const built = await buildOwsPaymentHandler(createSolanaOwsConfig());
 
       t.equal(built.network, "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
-      t.same(seenPaymentHandlerOptions, {
-        token: { allowOwnerOffCurve: true },
-      });
+      t.equal(seenPaymentHandlerOptions, undefined);
 
       if (capturedWallet == null) {
         throw new Error("expected Solana wallet to be captured");

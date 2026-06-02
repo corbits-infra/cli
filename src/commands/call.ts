@@ -35,6 +35,17 @@ import {
   selectPaymentRequirement,
 } from "../payment/signer.js";
 import {
+  buildFlexPaymentRetryHeader,
+  getFlexSessionViews,
+  type FlexConfirmArgs,
+} from "../payment/flex-solana.js";
+import {
+  formatFlexRequirementMismatch,
+  hasFlexRequirements,
+  isFlexScheme,
+  selectFlexRequirement,
+} from "../payment/flex.js";
+import {
   getPaymentRequirementInspection,
   printPaymentRequirementInspection,
 } from "../payment/options.js";
@@ -62,6 +73,7 @@ import {
 type CallDeps = {
   loadRequiredConfig: typeof loadRequiredConfig;
   buildPaymentRetryHeader: typeof buildPaymentRetryHeader;
+  buildFlexPaymentRetryHeader?: typeof buildFlexPaymentRetryHeader;
   runWrappedClient: typeof runWrappedClient;
   appendHistoryRecord?: typeof appendHistoryRecord;
   canPromptForConfirmation?: () => boolean;
@@ -85,6 +97,8 @@ type PaymentInfoOutput = {
     network: string;
     decimals?: number;
     txSignature?: string;
+    flexSessionId?: string;
+    flexEscrow?: string;
   };
   response?: {
     status: number | null;
@@ -296,6 +310,9 @@ function formatPaymentSummary(args: {
   if (paymentInfo.txSignature != null) {
     parts.push(`tx ${paymentInfo.txSignature}`);
   }
+  if (paymentInfo.flexSessionId != null) {
+    parts.push(`flex session ${paymentInfo.flexSessionId}`);
+  }
 
   if (responseStatus != null) {
     parts.push(`response ${formatResponseStatus(responseStatus.status)}`);
@@ -327,6 +344,12 @@ function formatPaymentInfoOutput(args: {
       ...(paymentInfo.txSignature == null
         ? {}
         : { txSignature: paymentInfo.txSignature }),
+      ...(paymentInfo.flexSessionId == null
+        ? {}
+        : { flexSessionId: paymentInfo.flexSessionId }),
+      ...(paymentInfo.flexEscrow == null
+        ? {}
+        : { flexEscrow: paymentInfo.flexEscrow }),
     },
     ...(responseStatus == null
       ? {}
@@ -596,6 +619,87 @@ async function handle402Retry(args: {
   );
 }
 
+async function promptForFlexConfirmation(
+  args: FlexConfirmArgs,
+): Promise<boolean> {
+  const prompt =
+    args.kind === "create"
+      ? `Create a reusable Flex session and deposit ${args.amount} base units? [y/N] `
+      : `Top up Flex session ${args.session.id} by ${args.amount} base units? [y/N] `;
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  try {
+    const answer = await readline.question(prompt);
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
+}
+
+async function handleFlex402Retry(args: {
+  deps: Pick<CallDeps, "buildFlexPaymentRetryHeader" | "runWrappedClient">;
+  config: ResolvedConfig;
+  tool: WrappedClient;
+  clientArgs: string[];
+  printPaymentInfo: boolean;
+  paymentInfoFormat: OutputFormat;
+  saveResponse: boolean;
+  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+  flexSession?: string;
+  allowCreateOrTopup: boolean;
+  confirm?: (args: FlexConfirmArgs) => Promise<boolean>;
+}): Promise<void> {
+  const buildFlexRetry =
+    args.deps.buildFlexPaymentRetryHeader ?? buildFlexPaymentRetryHeader;
+  const payment = await buildFlexRetry({
+    config: args.config,
+    url: args.firstAttempt.url,
+    response: args.firstAttempt.response,
+    requestInit: args.firstAttempt.requestInit,
+    ...(args.flexSession == null ? {} : { sessionId: args.flexSession }),
+    allowCreateOrTopup: args.allowCreateOrTopup,
+    ...(args.confirm == null ? {} : { confirm: args.confirm }),
+    note: (message) => process.stderr.write(`${message}\n`),
+  });
+  const retry = await args.deps.runWrappedClient({
+    tool: args.tool,
+    args: args.clientArgs,
+    extraHeader: payment.header,
+    streamOutput: !args.saveResponse,
+  });
+  if (retry.kind === "completed" || retry.kind === "streamed-completed") {
+    const paidCallInfo = args.printPaymentInfo
+      ? {
+          ...payment.paymentInfo,
+          flexSessionId: payment.paymentInfo.sessionId,
+          flexEscrow: payment.paymentInfo.escrow,
+        }
+      : undefined;
+    const responseStatus = args.printPaymentInfo
+      ? { status: retry.status }
+      : undefined;
+    writeOutcomeOutput(
+      retry,
+      paidCallInfo,
+      responseStatus,
+      args.paymentInfoFormat,
+    );
+    return;
+  }
+
+  if (retry.kind === "payment-rejected") {
+    write402Error(retry.reason);
+    return;
+  }
+
+  write402Error(
+    "server still returned 402 after Flex authorization or did not accept the session payment",
+  );
+}
+
 async function maybeConfirmPayment(args: {
   deps: Pick<CallDeps, "canPromptForConfirmation" | "confirmPayment">;
   config: ResolvedConfig;
@@ -702,6 +806,16 @@ export function createCallCommand(deps: CallDeps) {
         description:
           "Skip interactive payment confirmation when a call exceeds spending.confirmAboveUsd",
       }),
+      flexAuthorizeCurrent: flag({
+        long: "flex-authorize-current",
+        description:
+          "Allow non-interactive Flex session creation/top-up for the current challenge amount when used with --yes",
+      }),
+      flexSession: option({
+        type: optional(string),
+        long: "flex-session",
+        description: "Use a specific stored Flex session id",
+      }),
       asset: option({
         type: optional(string),
         long: "asset",
@@ -717,6 +831,8 @@ export function createCallCommand(deps: CallDeps) {
       paymentInfo,
       saveResponse,
       yes,
+      flexAuthorizeCurrent,
+      flexSession,
       asset,
       format: formatArg,
       tool,
@@ -748,10 +864,49 @@ export function createCallCommand(deps: CallDeps) {
           result.response,
           result.url,
         );
-        printPaymentRequirementInspection(
-          format,
-          getPaymentRequirementInspection(paymentRequired),
-        );
+        const inspection = getPaymentRequirementInspection(paymentRequired);
+        if (hasFlexRequirements(paymentRequired.accepts)) {
+          try {
+            const { resolved } = await deps.loadRequiredConfig();
+            const selection = selectFlexRequirement({
+              accepts: paymentRequired.accepts,
+              config: resolved,
+            });
+            if (selection.kind === "selected") {
+              const views = await getFlexSessionViews({
+                config: resolved,
+                requirement: selection.selected,
+              });
+              for (const requirement of inspection.requirements) {
+                if (!isFlexScheme(requirement.scheme)) {
+                  continue;
+                }
+                requirement.flex = {
+                  facilitator: selection.selected.facilitator,
+                  matchingSessions: views.map((view) => ({
+                    id: view.session.id,
+                    status: view.session.status,
+                    escrow: view.session.escrow,
+                    ...(view.availableAmount == null
+                      ? {}
+                      : { onChainAvailableAmount: view.availableAmount }),
+                    ...(view.vaultBalanceAmount == null
+                      ? {}
+                      : { onChainVaultBalance: view.vaultBalanceAmount }),
+                    ...(view.pendingAmount == null
+                      ? {}
+                      : { onChainPendingAmount: view.pendingAmount }),
+                    healthy: view.healthy,
+                    ...(view.reason == null ? {} : { reason: view.reason }),
+                  })),
+                };
+              }
+            }
+          } catch {
+            // `call --inspect` stays read-only and useful even without config.
+          }
+        }
+        printPaymentRequirementInspection(format, inspection);
         return;
       }
 
@@ -789,6 +944,78 @@ export function createCallCommand(deps: CallDeps) {
           write402Error(err instanceof Error ? err.message : String(err));
           return;
         }
+      }
+
+      let paymentRequired:
+        | Awaited<ReturnType<typeof extractPaymentRequiredResponse>>
+        | undefined;
+      try {
+        paymentRequired = await extractPaymentRequiredResponse(
+          result.response.clone(),
+          result.url,
+        );
+      } catch {
+        paymentRequired = undefined;
+      }
+
+      const flexSelection =
+        paymentRequired == null
+          ? undefined
+          : selectFlexRequirement({
+              accepts: paymentRequired.accepts,
+              config: activeConfig,
+            });
+      if (flexSelection?.kind === "selected") {
+        const promptAllowed =
+          deps.canPromptForConfirmation ?? canPromptForConfirmation;
+        const canPrompt = !yes && promptAllowed();
+        const allowCreateOrTopup = (yes && flexAuthorizeCurrent) || canPrompt;
+        try {
+          await handleFlex402Retry({
+            deps: {
+              runWrappedClient: deps.runWrappedClient,
+              ...(deps.buildFlexPaymentRetryHeader == null
+                ? {}
+                : {
+                    buildFlexPaymentRetryHeader:
+                      deps.buildFlexPaymentRetryHeader,
+                  }),
+            },
+            config: activeConfig,
+            tool: result.tool,
+            clientArgs,
+            printPaymentInfo: paymentInfo,
+            paymentInfoFormat: paymentInfo
+              ? await resolveOutputFormat(formatArg)
+              : "table",
+            saveResponse,
+            firstAttempt: result,
+            ...(flexSession == null ? {} : { flexSession }),
+            allowCreateOrTopup,
+            ...(canPrompt ? { confirm: promptForFlexConfirmation } : {}),
+          });
+        } catch (err) {
+          write402Error(err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
+
+      if (
+        paymentRequired != null &&
+        flexSelection != null &&
+        hasFlexRequirements(paymentRequired.accepts)
+      ) {
+        write402Error(
+          formatFlexRequirementMismatch(activeConfig, flexSelection),
+        );
+        return;
+      }
+
+      if (flexAuthorizeCurrent || flexSession != null) {
+        write402Error(
+          "Flex flags can only be used with a Flex payment challenge",
+        );
+        return;
       }
 
       if (
@@ -833,6 +1060,7 @@ export function createCallCommand(deps: CallDeps) {
 export const call = createCallCommand({
   loadRequiredConfig,
   buildPaymentRetryHeader,
+  buildFlexPaymentRetryHeader,
   runWrappedClient,
   appendHistoryRecord,
   checkPreflightBalance,

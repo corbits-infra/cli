@@ -44,13 +44,15 @@
     "typescript-eslint": "^8.57.2"
   },
   "dependencies": {
+    "@faremeter/flex-solana": "^0.2.1",
     "@faremeter/info": "^0.20.1",
     "@faremeter/payment-evm": "^0.20.1",
-    "@faremeter/payment-solana": "^0.20.1",
+    "@faremeter/payment-solana": "^0.22.0",
     "@faremeter/types": "^0.20.1",
     "@faremeter/wallet-evm": "^0.20.1",
-    "@faremeter/wallet-solana": "^0.20.1",
+    "@faremeter/wallet-solana": "^0.22.0",
     "@open-wallet-standard/core": "^1.2.4",
+    "@solana/kit": "^6.7.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",
     "arktype": "^2.2.0",

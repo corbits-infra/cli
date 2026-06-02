@@ -38,6 +38,7 @@ const { balance } = await import("./commands/balance.js");
 const { call } = await import("./commands/call.js");
 const { config } = await import("./commands/config.js");
 const { discover } = await import("./commands/discover.js");
+const { flex } = await import("./commands/flex.js");
 const { history } = await import("./commands/history.js");
 const { inspect } = await import("./commands/inspect.js");
 const { APIError, ValidationError } = await import("./api/client.js");
@@ -47,7 +48,7 @@ const app = subcommands({
   name: "corbits",
   version: pkg.version,
   description: "Browse, filter, and test x402-gated services",
-  cmds: { discover, inspect, config, call, balance, history },
+  cmds: { discover, inspect, config, call, balance, history, flex },
 });
 
 run(app, process.argv.slice(2)).catch((err: unknown) => {

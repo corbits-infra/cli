@@ -51,14 +51,6 @@ export type OwsPaymentHandler = {
   network: string;
 };
 
-const SOLANA_PAYMENT_HANDLER_OPTIONS = {
-  token: {
-    // Some x402 facilitators use PDA-owned settlement addresses as `payTo`.
-    // SPL ATA derivation must allow off-curve owners for those recipients.
-    allowOwnerOffCurve: true,
-  },
-} as const;
-
 const EIP712_DOMAIN_TYPE = [
   { name: "name", type: "string" },
   { name: "version", type: "string" },
@@ -251,7 +243,6 @@ function buildSolanaOwsPaymentHandler(
   }
 
   const publicKey = new PublicKey(walletAccount.account.address);
-  const connection = deps.createConnection(config.payment.rpcURL);
   const mint = new PublicKey(asset);
   const wallet = buildSolanaOwsWallet(
     cluster,
@@ -262,10 +253,11 @@ function buildSolanaOwsPaymentHandler(
 
   return {
     handler: deps.createSolanaPaymentHandler(
-      wallet,
+      wallet as unknown as Parameters<
+        typeof solanaExact.createPaymentHandler
+      >[0],
       mint,
-      connection,
-      SOLANA_PAYMENT_HANDLER_OPTIONS,
+      config.payment.rpcURL,
     ),
     network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
   };
