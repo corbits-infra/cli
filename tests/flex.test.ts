@@ -242,70 +242,64 @@ await t.test(
   },
 );
 
-await t.test(
-  "requires explicit non-interactive Flex authorization flags",
-  async (t) => {
-    const priorExitCode = process.exitCode;
-    process.exitCode = undefined;
-    t.teardown(() => {
-      process.exitCode = priorExitCode;
-    });
+await t.test("uses --yes for non-interactive Flex authorization", async (t) => {
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  t.teardown(() => {
+    process.exitCode = priorExitCode;
+  });
 
-    const call = createCallCommand({
-      loadRequiredConfig: async () => ({
-        path: "/tmp/config.toml",
-        config: {
-          version: 1,
-          preferences: {
-            format: "table",
-            api_url: "https://api.corbits.dev",
-          },
-          payment: {
-            network: "devnet",
-          },
-          wallets: {
-            solana: {
-              kind: "keypair",
-              address: resolvedConfig.activeWallet.address,
-              path: "~/.config/solana/id.json",
-            },
+  const call = createCallCommand({
+    loadRequiredConfig: async () => ({
+      path: "/tmp/config.toml",
+      config: {
+        version: 1,
+        preferences: {
+          format: "table",
+          api_url: "https://api.corbits.dev",
+        },
+        payment: {
+          network: "devnet",
+        },
+        wallets: {
+          solana: {
+            kind: "keypair",
+            address: resolvedConfig.activeWallet.address,
+            path: "~/.config/solana/id.json",
           },
         },
-        resolved: resolvedConfig,
-      }),
-      buildPaymentRetryHeader: async () => {
-        throw new Error("should not use exact payment builder");
       },
-      buildFlexPaymentRetryHeader: async (args) => {
-        throw new Error(
-          `allowCreateOrTopup=${String(args.allowCreateOrTopup)}`,
-        );
-      },
-      runWrappedClient: async () => ({
-        kind: "payment-required",
-        tool: "curl",
-        url: "https://example.com/flex",
-        requestInit: { method: "GET" },
-        response: createPaymentRequiredResponse(),
-      }),
-      canPromptForConfirmation: () => false,
-    });
+      resolved: resolvedConfig,
+    }),
+    buildPaymentRetryHeader: async () => {
+      throw new Error("should not use exact payment builder");
+    },
+    buildFlexPaymentRetryHeader: async (args) => {
+      throw new Error(`allowCreateOrTopup=${String(args.allowCreateOrTopup)}`);
+    },
+    runWrappedClient: async () => ({
+      kind: "payment-required",
+      tool: "curl",
+      url: "https://example.com/flex",
+      requestInit: { method: "GET" },
+      response: createPaymentRequiredResponse(),
+    }),
+    canPromptForConfirmation: () => false,
+  });
 
-    const stderr = await captureStderr(() =>
-      call.handler({
-        inspect: false,
-        paymentInfo: false,
-        saveResponse: false,
-        yes: true,
-        flexAuthorizeCurrent: false,
-        flexSession: undefined,
-        asset: undefined,
-        format: undefined,
-        tool: "curl",
-        args: ["https://example.com/flex"],
-      }),
-    );
+  const stderr = await captureStderr(() =>
+    call.handler({
+      inspect: false,
+      paymentInfo: false,
+      saveResponse: false,
+      yes: true,
+      flexSession: undefined,
+      asset: undefined,
+      format: undefined,
+      tool: "curl",
+      args: ["https://example.com/flex"],
+    }),
+  );
 
-    t.match(stderr, /allowCreateOrTopup=false/);
-  },
-);
+  t.match(stderr, /allowCreateOrTopup=true/);
+});
