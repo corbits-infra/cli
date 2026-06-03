@@ -587,7 +587,7 @@ export async function ensureFlexSession(
     const topupAmount = selected.shortfallAmount;
     if (!args.allowCreateOrTopup) {
       throw new Error(
-        `Flex session ${selected.session.id} needs a top-up of ${topupAmount}; rerun with --yes and --flex-authorize-current`,
+        `Flex session ${selected.session.id} needs a top-up of ${topupAmount}; rerun with --yes`,
       );
     }
     if (
@@ -623,7 +623,7 @@ export async function ensureFlexSession(
 
   if (!args.allowCreateOrTopup) {
     throw new Error(
-      "No funded Flex session matches this challenge; rerun with --yes and --flex-authorize-current",
+      "No funded Flex session matches this challenge; rerun with --yes",
     );
   }
   if (

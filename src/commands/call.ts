@@ -113,6 +113,13 @@ type ConfirmPaymentArgs = {
   networkDisplay: string;
 };
 
+type HistoryPaymentInfo = {
+  amount: string;
+  asset: string;
+  assetSymbol?: string;
+  decimals?: number;
+};
+
 const USD_NORMALIZATION_STABLECOIN_SYMBOLS = new Set([
   "USDC",
   "PYUSD",
@@ -429,6 +436,49 @@ function writeHistoryWarning(message: string): void {
   process.stderr.write(`Warning: ${message}\n`);
 }
 
+async function persistPaidCallHistory(args: {
+  persistHistory: typeof appendHistoryRecord;
+  config: ResolvedConfig;
+  tool: WrappedClient;
+  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+  retry: Extract<
+    WrappedRunResult,
+    { kind: "completed" } | { kind: "streamed-completed" }
+  >;
+  paymentInfo: HistoryPaymentInfo;
+  saveResponse: boolean;
+  txSignature?: string;
+}): Promise<void> {
+  const responseBody =
+    args.saveResponse && args.retry.kind === "completed"
+      ? args.retry.stdout
+      : undefined;
+
+  await args.persistHistory(
+    createHistoryRecord({
+      tool: args.tool,
+      url: args.firstAttempt.url,
+      responseStatus: args.retry.status,
+      amount: args.paymentInfo.amount,
+      asset: args.paymentInfo.asset,
+      ...(args.paymentInfo.assetSymbol == null
+        ? {}
+        : { assetSymbol: args.paymentInfo.assetSymbol }),
+      ...(args.paymentInfo.decimals == null
+        ? {}
+        : { decimals: args.paymentInfo.decimals }),
+      network: formatPaymentNetworkDisplay(args.config.payment.network),
+      walletAddress: args.config.activeWallet.address,
+      walletKind: args.config.activeWallet.kind,
+      ...(typeof args.firstAttempt.requestInit.method === "string"
+        ? { method: args.firstAttempt.requestInit.method }
+        : {}),
+      ...(args.txSignature == null ? {} : { txSignature: args.txSignature }),
+    }),
+    responseBody == null ? undefined : { responseBody },
+  );
+}
+
 function assertSaveResponseSupported(
   tool: WrappedClient,
   clientArgs: string[],
@@ -561,41 +611,23 @@ async function handle402Retry(args: {
       args.paymentInfoFormat,
     );
 
-    const responseBody =
-      args.saveResponse && retry.kind === "completed"
-        ? retry.stdout
-        : undefined;
-
     if (retry.exitCode !== 0) {
       return;
     }
 
     try {
-      await persistHistory(
-        createHistoryRecord({
-          tool: args.tool,
-          url: args.firstAttempt.url,
-          responseStatus: retry.status,
-          amount: payment.paymentInfo.amount,
-          asset: payment.paymentInfo.asset,
-          ...(payment.paymentInfo.assetSymbol == null
-            ? {}
-            : { assetSymbol: payment.paymentInfo.assetSymbol }),
-          ...(payment.paymentInfo.decimals == null
-            ? {}
-            : { decimals: payment.paymentInfo.decimals }),
-          network: formatPaymentNetworkDisplay(args.config.payment.network),
-          walletAddress: args.config.activeWallet.address,
-          walletKind: args.config.activeWallet.kind,
-          ...(typeof args.firstAttempt.requestInit.method === "string"
-            ? { method: args.firstAttempt.requestInit.method }
-            : {}),
-          ...(settledTransaction == null
-            ? {}
-            : { txSignature: settledTransaction }),
-        }),
-        responseBody == null ? undefined : { responseBody },
-      );
+      await persistPaidCallHistory({
+        persistHistory,
+        config: args.config,
+        tool: args.tool,
+        firstAttempt: args.firstAttempt,
+        retry,
+        paymentInfo: payment.paymentInfo,
+        saveResponse: args.saveResponse,
+        ...(settledTransaction == null
+          ? {}
+          : { txSignature: settledTransaction }),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       writeHistoryWarning(
@@ -640,7 +672,10 @@ async function promptForFlexConfirmation(
 }
 
 async function handleFlex402Retry(args: {
-  deps: Pick<CallDeps, "buildFlexPaymentRetryHeader" | "runWrappedClient">;
+  deps: Pick<
+    CallDeps,
+    "buildFlexPaymentRetryHeader" | "appendHistoryRecord" | "runWrappedClient"
+  >;
   config: ResolvedConfig;
   tool: WrappedClient;
   clientArgs: string[];
@@ -654,6 +689,7 @@ async function handleFlex402Retry(args: {
 }): Promise<void> {
   const buildFlexRetry =
     args.deps.buildFlexPaymentRetryHeader ?? buildFlexPaymentRetryHeader;
+  const persistHistory = args.deps.appendHistoryRecord ?? appendHistoryRecord;
   const payment = await buildFlexRetry({
     config: args.config,
     url: args.firstAttempt.url,
@@ -687,6 +723,29 @@ async function handleFlex402Retry(args: {
       responseStatus,
       args.paymentInfoFormat,
     );
+
+    if (retry.exitCode !== 0) {
+      return;
+    }
+
+    try {
+      await persistPaidCallHistory({
+        persistHistory,
+        config: args.config,
+        tool: args.tool,
+        firstAttempt: args.firstAttempt,
+        retry,
+        paymentInfo: payment.paymentInfo,
+        saveResponse: args.saveResponse,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeHistoryWarning(
+        args.saveResponse
+          ? `paid call succeeded, but history and saved response could not be persisted: ${message}`
+          : `paid call succeeded, but history could not be persisted: ${message}`,
+      );
+    }
     return;
   }
 
@@ -806,11 +865,6 @@ export function createCallCommand(deps: CallDeps) {
         description:
           "Skip interactive payment confirmation when a call exceeds spending.confirmAboveUsd",
       }),
-      flexAuthorizeCurrent: flag({
-        long: "flex-authorize-current",
-        description:
-          "Allow non-interactive Flex session creation/top-up for the current challenge amount when used with --yes",
-      }),
       flexSession: option({
         type: optional(string),
         long: "flex-session",
@@ -831,7 +885,6 @@ export function createCallCommand(deps: CallDeps) {
       paymentInfo,
       saveResponse,
       yes,
-      flexAuthorizeCurrent,
       flexSession,
       asset,
       format: formatArg,
@@ -969,11 +1022,14 @@ export function createCallCommand(deps: CallDeps) {
         const promptAllowed =
           deps.canPromptForConfirmation ?? canPromptForConfirmation;
         const canPrompt = !yes && promptAllowed();
-        const allowCreateOrTopup = (yes && flexAuthorizeCurrent) || canPrompt;
+        const allowCreateOrTopup = yes || canPrompt;
         try {
           await handleFlex402Retry({
             deps: {
               runWrappedClient: deps.runWrappedClient,
+              ...(deps.appendHistoryRecord == null
+                ? {}
+                : { appendHistoryRecord: deps.appendHistoryRecord }),
               ...(deps.buildFlexPaymentRetryHeader == null
                 ? {}
                 : {
@@ -1011,9 +1067,9 @@ export function createCallCommand(deps: CallDeps) {
         return;
       }
 
-      if (flexAuthorizeCurrent || flexSession != null) {
+      if (flexSession != null) {
         write402Error(
-          "Flex flags can only be used with a Flex payment challenge",
+          "--flex-session can only be used with a Flex payment challenge",
         );
         return;
       }
