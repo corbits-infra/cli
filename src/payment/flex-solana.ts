@@ -61,6 +61,11 @@ import {
   type FlexSessionRecord,
   type FlexSessionRuntimeView,
 } from "./flex.js";
+import { formatDisplayTokenAmount } from "../output/format.js";
+import {
+  getKnownPaymentAssetDecimals,
+  resolvePaymentAssetSymbol,
+} from "./requirements.js";
 
 const MIN_REFUND_TIMEOUT_SLOTS = 150n;
 const DEFAULT_REFUND_TIMEOUT_SLOTS = 300n;
@@ -182,6 +187,31 @@ export function buildFlexPaymentHeader(args: {
       "utf8",
     ).toString("base64"),
   };
+}
+
+function formatFlexRequirementAmount(
+  amount: string,
+  requirement: FlexRequirementDetails,
+): string {
+  const asset = requirement.symbol ?? requirement.asset;
+  return `${formatDisplayTokenAmount({
+    amount,
+    asset,
+    ...(requirement.decimals == null ? {} : { decimals: requirement.decimals }),
+  })} ${asset}`;
+}
+
+function formatFlexSessionAmount(
+  amount: string,
+  session: FlexSessionRecord,
+): string {
+  const asset = resolvePaymentAssetSymbol(session.network, session.mint);
+  const assetDisplay = asset ?? session.mint;
+  return `${formatDisplayTokenAmount({
+    amount,
+    asset: assetDisplay,
+    decimals: getKnownPaymentAssetDecimals(session.network, session.mint),
+  })} ${assetDisplay}`;
 }
 
 function parseSolanaSecretKey(value: string): Uint8Array {
@@ -630,7 +660,7 @@ export async function ensureFlexSession(
     const topupAmount = selected.shortfallAmount;
     if (!args.allowCreateOrTopup) {
       throw new Error(
-        `Flex session ${selected.session.id} needs a top-up of ${topupAmount}; rerun with --yes`,
+        `Flex session ${selected.session.id} needs a top-up of ${formatFlexRequirementAmount(topupAmount, args.requirement)}; rerun with --yes`,
       );
     }
     if (
@@ -645,7 +675,7 @@ export async function ensureFlexSession(
       throw new Error("Flex top-up cancelled");
     }
     args.note?.(
-      `Topping up Flex session ${selected.session.id} by ${topupAmount}`,
+      `Topping up Flex session ${selected.session.id} by ${formatFlexRequirementAmount(topupAmount, args.requirement)}`,
     );
     const session = await topUpSession({
       config: args.config,
@@ -679,7 +709,9 @@ export async function ensureFlexSession(
   ) {
     throw new Error("Flex session creation cancelled");
   }
-  args.note?.(`Creating Flex session with deposit ${targetAmount}`);
+  args.note?.(
+    `Creating Flex session with deposit ${formatFlexRequirementAmount(targetAmount, args.requirement)}`,
+  );
   const session = await createSession({
     config: args.config,
     owner,
@@ -802,7 +834,9 @@ export async function topUpFlexSession(args: {
 
   const rpc = defaultFlexSolanaDeps.createRpc(args.config.payment.rpcURL);
   const owner = await loadOwnerSigner(args.config, defaultFlexSolanaDeps);
-  args.note?.(`Topping up Flex session ${args.session.id} by ${args.amount}`);
+  args.note?.(
+    `Topping up Flex session ${args.session.id} by ${formatFlexSessionAmount(args.amount, args.session)}`,
+  );
   return topUpSession({
     config: args.config,
     owner,

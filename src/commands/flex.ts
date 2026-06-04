@@ -12,6 +12,7 @@ import { createInterface } from "node:readline/promises";
 import { loadRequiredConfig } from "../config/index.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 import {
+  formatDisplayTokenAmount,
   printJSON,
   printTable,
   printYaml,
@@ -24,17 +25,112 @@ import {
 } from "../payment/flex-solana.js";
 import {
   isFlexSessionEligibleForTopup,
-  parsePositiveBaseUnitAmount,
   readFlexSessionStore,
   type FlexSessionRecord,
   type FlexSessionRuntimeView,
 } from "../payment/flex.js";
+import {
+  formatPaymentOptionNetwork,
+  getKnownPaymentAssetDecimals,
+  resolvePaymentAssetSymbol,
+} from "../payment/requirements.js";
 
-function parseBaseUnitAmount(name: string, value: string): string {
-  return parsePositiveBaseUnitAmount(name, value);
+function getSessionAssetDisplay(session: FlexSessionRecord): {
+  asset: string;
+  assetAddress: string;
+  decimals: number | null;
+} {
+  const symbol = resolvePaymentAssetSymbol(session.network, session.mint);
+  return {
+    asset: symbol ?? session.mint,
+    assetAddress: session.mint,
+    decimals: getKnownPaymentAssetDecimals(session.network, session.mint),
+  };
 }
 
-function statusRows(views: FlexSessionRuntimeView[]) {
+function formatSessionAmount(
+  session: FlexSessionRecord,
+  amount: string | undefined,
+): string | undefined {
+  if (amount == null) {
+    return undefined;
+  }
+  const asset = getSessionAssetDisplay(session);
+  return formatDisplayTokenAmount({
+    amount,
+    asset: asset.asset,
+    decimals: asset.decimals,
+  });
+}
+
+function formatSessionAmountWithAsset(
+  session: FlexSessionRecord,
+  amount: string,
+): string {
+  const asset = getSessionAssetDisplay(session);
+  return `${formatDisplayTokenAmount({
+    amount,
+    asset: asset.asset,
+    decimals: asset.decimals,
+  })} ${asset.asset}`;
+}
+
+export function parsePositiveDisplayAmount(
+  name: string,
+  value: string,
+  decimals: number,
+): string {
+  const trimmed = value.trim();
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) {
+    throw new Error(`${name} must be a decimal amount`);
+  }
+
+  const [wholePartRaw = "", fractionalPartRaw = ""] = trimmed.split(".");
+  const wholePart = wholePartRaw.length === 0 ? "0" : wholePartRaw;
+  const excessFractional = fractionalPartRaw.slice(decimals);
+  if (/[1-9]/.exec(excessFractional) != null) {
+    throw new Error(
+      `${name} has more decimal places than this Flex session asset supports`,
+    );
+  }
+
+  const fractionalPart = fractionalPartRaw
+    .slice(0, decimals)
+    .padEnd(decimals, "0");
+  const amount = `${wholePart}${fractionalPart}`.replace(/^0+(?=\d)/, "");
+  if (amount === "0") {
+    throw new Error(`${name} must be greater than zero`);
+  }
+  return amount;
+}
+
+function parseFlexTopupAmount(
+  name: string,
+  value: string,
+  session: FlexSessionRecord,
+): string {
+  const asset = getSessionAssetDisplay(session);
+  if (asset.decimals == null) {
+    throw new Error(
+      `Cannot parse ${name} for ${asset.asset}; asset decimals are unknown`,
+    );
+  }
+  return parsePositiveDisplayAmount(name, value, asset.decimals);
+}
+
+function getSessionIssueDisplay(view: FlexSessionRuntimeView): {
+  issue?: string;
+} {
+  const reason = view.reason ?? view.session.close_error;
+  if (view.healthy) {
+    return {};
+  }
+  return {
+    issue: reason == null || reason.length === 0 ? "unhealthy" : reason,
+  };
+}
+
+export function statusRows(views: FlexSessionRuntimeView[]) {
   return views.map((view) => ({
     id: view.session.id,
     status: view.session.status,
@@ -53,6 +149,32 @@ function statusRows(views: FlexSessionRuntimeView[]) {
   }));
 }
 
+export function statusDisplayRows(views: FlexSessionRuntimeView[]) {
+  return views.map((view) => {
+    const asset = getSessionAssetDisplay(view.session);
+    return {
+      id: view.session.id,
+      status: view.session.status,
+      network: formatPaymentOptionNetwork(view.session.network),
+      asset: asset.asset,
+      assetAddress: asset.assetAddress,
+      deposited: formatSessionAmount(
+        view.session,
+        view.session.deposited_amount,
+      ),
+      ...(view.availableAmount == null
+        ? {}
+        : {
+            available: formatSessionAmount(view.session, view.availableAmount),
+          }),
+      ...getSessionIssueDisplay(view),
+      owner: view.session.owner_address,
+      escrow: view.session.escrow,
+      sessionKey: view.session.session_key_address,
+    };
+  });
+}
+
 function printStatus(
   format: OutputFormat,
   views: FlexSessionRuntimeView[],
@@ -66,33 +188,38 @@ function printStatus(
     printYaml(rows);
     return;
   }
-  if (rows.length === 0) {
+  const displayRows = statusDisplayRows(views);
+  if (displayRows.length === 0) {
     writeLine("No Flex sessions found.");
     return;
   }
+  const showState = displayRows.some(
+    (row) => row.status !== "open" || row.issue != null,
+  );
+  const head = showState
+    ? ["ID", "Network", "Asset", "Deposited", "Available", "State"]
+    : ["ID", "Network", "Asset", "Deposited", "Available"];
   printTable(
-    [
-      "ID",
-      "Status",
-      "Network",
-      "Mint",
-      "Facilitator",
-      "Escrow",
-      "On-chain Available",
-      "On-chain Pending",
-      "Health",
-    ],
-    rows.map((row) => [
-      row.id,
-      row.status,
-      row.network,
-      row.mint,
-      row.facilitator,
-      row.escrow,
-      row.onChainAvailableAmount,
-      row.onChainPendingAmount,
-      row.healthy ? "healthy" : row.reason,
-    ]),
+    head,
+    displayRows.map((row) => {
+      const base = [
+        row.id,
+        row.network,
+        row.asset,
+        row.deposited ?? "",
+        row.available ?? "",
+      ];
+      if (!showState) {
+        return base;
+      }
+      const state =
+        row.issue == null
+          ? row.status
+          : row.status === "open"
+            ? row.issue
+            : `${row.status}: ${row.issue}`;
+      return [...base, state];
+    }),
   );
 }
 
@@ -103,7 +230,7 @@ async function promptForFlexConfirmation(args: {
   if (!process.stdin.isTTY) {
     throw new Error("Flex top-up requires an interactive terminal or --yes");
   }
-  const prompt = `Top up Flex session ${args.session.id} by ${args.amount} base units? [y/N] `;
+  const prompt = `Top up Flex session ${args.session.id} by ${formatSessionAmountWithAsset(args.session, args.amount)}? [y/N] `;
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -129,15 +256,13 @@ async function promptForFlexSessionId(
     );
   }
   printTable(
-    ["#", "ID", "Network", "Mint", "Escrow", "On-chain Available", "Health"],
+    ["#", "ID", "Network", "Asset", "Available"],
     views.map((view, index) => [
       String(index + 1),
       view.session.id,
-      view.session.network,
-      view.session.mint,
-      view.session.escrow,
-      view.availableAmount ?? "",
-      view.healthy ? "healthy" : (view.reason ?? "unknown"),
+      formatPaymentOptionNetwork(view.session.network),
+      getSessionAssetDisplay(view.session).asset,
+      formatSessionAmount(view.session, view.availableAmount) ?? "",
     ]),
   );
   const readline = createInterface({
@@ -204,7 +329,7 @@ const flexTopup = command({
     amount: option({
       type: string,
       long: "amount",
-      description: "Top-up amount in token base units",
+      description: "Top-up amount",
     }),
     yes: flag({
       long: "yes",
@@ -229,7 +354,7 @@ const flexTopup = command({
     const session = findStoredSession(store.sessions, selectedSessionId, [
       "open",
     ]);
-    const parsedAmount = parseBaseUnitAmount("--amount", amount);
+    const parsedAmount = parseFlexTopupAmount("--amount", amount, session);
     if (!yes) {
       const approved = await promptForFlexConfirmation({
         session,
