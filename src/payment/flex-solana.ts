@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 
+import { translateNetworkToLegacy } from "@faremeter/info";
 import {
   type Address,
   type Instruction,
@@ -28,8 +29,14 @@ import {
 import { createPaymentHandler as createFlexPaymentHandler } from "@faremeter/payment-solana/flex/client";
 import type { PaymentHandler } from "@faremeter/types/client";
 import {
+  X_PAYMENT_HEADER,
+  type x402PaymentPayload as x402PaymentPayloadV1,
+} from "@faremeter/types/x402";
+import {
   V2_PAYMENT_HEADER,
   type x402PaymentPayload,
+  type x402ResourceInfo,
+  type x402PaymentRequirements,
 } from "@faremeter/types/x402v2";
 
 import { ConfigError, type ResolvedConfig } from "../config/index.js";
@@ -86,7 +93,7 @@ export type FlexPaymentMetadata = {
 };
 
 export type FlexPaymentRetryHeaderResult = {
-  detectedVersion: 2;
+  detectedVersion: 1 | 2;
   header: RetryHeader;
   paymentInfo: FlexPaymentMetadata;
 };
@@ -140,6 +147,42 @@ export type BuildFlexPaymentRetryHeaderArgs = {
   note?: EnsureFlexSessionArgs["note"];
   storePath?: string;
 };
+
+export function buildFlexPaymentHeader(args: {
+  detectedVersion: 1 | 2;
+  requirements: x402PaymentRequirements;
+  payload: object;
+  resource?: x402ResourceInfo;
+}): RetryHeader {
+  if (args.detectedVersion === 2) {
+    return {
+      name: V2_PAYMENT_HEADER,
+      value: Buffer.from(
+        JSON.stringify({
+          x402Version: 2,
+          accepted: args.requirements,
+          payload: args.payload,
+          ...(args.resource == null ? {} : { resource: args.resource }),
+        } satisfies x402PaymentPayload),
+        "utf8",
+      ).toString("base64"),
+    };
+  }
+
+  return {
+    name: X_PAYMENT_HEADER,
+    value: Buffer.from(
+      JSON.stringify({
+        x402Version: 1,
+        scheme: args.requirements.scheme,
+        network: translateNetworkToLegacy(args.requirements.network),
+        asset: args.requirements.asset,
+        payload: args.payload,
+      } satisfies x402PaymentPayloadV1),
+      "utf8",
+    ).toString("base64"),
+  };
+}
 
 function parseSolanaSecretKey(value: string): Uint8Array {
   let parsed: unknown;
@@ -661,11 +704,6 @@ export async function buildFlexPaymentRetryHeader(
     args.response,
     args.url,
   );
-  if (paymentRequired.detectedVersion !== 2) {
-    throw new Error(
-      "Flex payments require an x402 v2 PAYMENT-REQUIRED challenge",
-    );
-  }
   const selection = selectFlexRequirement({
     accepts: paymentRequired.accepts,
     config: args.config,
@@ -707,23 +745,17 @@ export async function buildFlexPaymentRetryHeader(
     throw new Error("failed to build a Flex payment authorization");
   }
   const { payload } = await execer.exec();
-  const header = {
-    name: V2_PAYMENT_HEADER,
-    value: Buffer.from(
-      JSON.stringify({
-        x402Version: 2,
-        accepted: execer.requirements,
-        payload,
-        ...(paymentRequired.resource == null
-          ? {}
-          : { resource: paymentRequired.resource }),
-      } satisfies x402PaymentPayload),
-      "utf8",
-    ).toString("base64"),
-  };
+  const header = buildFlexPaymentHeader({
+    detectedVersion: paymentRequired.detectedVersion,
+    requirements: execer.requirements,
+    payload,
+    ...(paymentRequired.resource == null
+      ? {}
+      : { resource: paymentRequired.resource }),
+  });
 
   return {
-    detectedVersion: 2,
+    detectedVersion: paymentRequired.detectedVersion,
     header,
     paymentInfo: {
       amount: execer.requirements.amount,
