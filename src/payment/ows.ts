@@ -5,11 +5,13 @@ import {
   type AccountInfo,
   type WalletInfo,
 } from "@open-wallet-standard/core";
+import { Connection } from "@solana/web3.js";
 import {
-  Connection,
-  PublicKey,
-  type VersionedTransaction,
-} from "@solana/web3.js";
+  address,
+  getBase64EncodedWireTransaction,
+  type Address,
+  type Transaction,
+} from "@solana/kit";
 import { fromHex, isAddress, isAddressEqual, isHex, type Hex } from "viem";
 import {
   isKnownAsset,
@@ -85,22 +87,35 @@ function requireEvmAddress(value: string, message: string): Hex {
 
 function signSolanaTransactionWithOws(
   walletId: string,
-  tx: VersionedTransaction,
-  publicKey: PublicKey,
+  tx: Transaction,
+  publicKey: Address,
   deps: Pick<OwsDeps, "signTransaction">,
-): void {
-  const txHex = Buffer.from(tx.serialize()).toString("hex");
+): Transaction {
+  const txHex = Buffer.from(
+    getBase64EncodedWireTransaction(tx),
+    "base64",
+  ).toString("hex");
   const { signature } = deps.signTransaction(walletId, "solana", txHex);
-  tx.addSignature(
-    publicKey,
-    fromHex(
-      requireHex(
-        signature,
-        `OWS returned an invalid Solana signature for ${walletId}`,
-      ),
-      "bytes",
+  const signatureBytes = fromHex(
+    requireHex(
+      signature,
+      `OWS returned an invalid Solana signature for ${walletId}`,
     ),
+    "bytes",
   );
+  if (signatureBytes.length !== 64) {
+    throw new ConfigError(
+      `OWS returned an invalid Solana signature for ${walletId}`,
+    );
+  }
+
+  return {
+    ...tx,
+    signatures: Object.freeze({
+      ...tx.signatures,
+      [publicKey]: signatureBytes,
+    }),
+  };
 }
 
 function normalizeTypedDataForOws(value: unknown): unknown {
@@ -216,16 +231,14 @@ export type OwsDeps = {
 function buildSolanaOwsWallet(
   cluster: "mainnet-beta" | "devnet",
   walletId: string,
-  publicKey: PublicKey,
+  publicKey: Address,
   deps: Pick<OwsDeps, "signTransaction">,
 ) {
   return {
     network: cluster,
     publicKey,
-    partiallySignTransaction: async (tx: VersionedTransaction) => {
-      signSolanaTransactionWithOws(walletId, tx, publicKey, deps);
-      return tx;
-    },
+    partiallySignTransaction: async (tx: Transaction) =>
+      signSolanaTransactionWithOws(walletId, tx, publicKey, deps),
   };
 }
 
@@ -242,8 +255,8 @@ function buildSolanaOwsPaymentHandler(
     throw new ConfigError(`No known USDC mint for Solana cluster ${cluster}`);
   }
 
-  const publicKey = new PublicKey(walletAccount.account.address);
-  const mint = new PublicKey(asset);
+  const publicKey = address(walletAccount.account.address);
+  const mint = address(asset);
   const wallet = buildSolanaOwsWallet(
     cluster,
     walletAccount.walletId,
@@ -253,9 +266,7 @@ function buildSolanaOwsPaymentHandler(
 
   return {
     handler: deps.createSolanaPaymentHandler(
-      wallet as unknown as Parameters<
-        typeof solanaExact.createPaymentHandler
-      >[0],
+      wallet,
       mint,
       config.payment.rpcURL,
     ),

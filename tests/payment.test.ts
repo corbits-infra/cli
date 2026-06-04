@@ -2,16 +2,23 @@
 
 import t from "tap";
 import type { ChainInfo } from "@faremeter/types/evm";
+import { exact as solanaExact } from "@faremeter/payment-solana";
 import {
   V2_PAYMENT_HEADER,
   V2_PAYMENT_REQUIRED_HEADER,
 } from "@faremeter/types/x402v2";
+import { Keypair } from "@solana/web3.js";
 import {
-  Keypair,
-  PublicKey,
-  TransactionMessage,
-  VersionedTransaction,
-} from "@solana/web3.js";
+  compileTransaction,
+  createTransactionMessage,
+  getBase64EncodedWireTransaction,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+  type Address,
+  type Blockhash,
+  type Transaction,
+} from "@solana/kit";
 import { captureStdout } from "./test-helpers.js";
 import {
   getPaymentOptions,
@@ -1278,10 +1285,8 @@ await t.test("OWS payment handlers", async (t) => {
       let signTransactionArgs: unknown[] | undefined;
       let capturedWallet:
         | {
-            publicKey: PublicKey;
-            partiallySignTransaction(
-              tx: VersionedTransaction,
-            ): Promise<VersionedTransaction>;
+            publicKey: Address;
+            partiallySignTransaction(tx: Transaction): Promise<Transaction>;
           }
         | undefined;
       let seenPaymentHandlerOptions: unknown;
@@ -1339,22 +1344,32 @@ await t.test("OWS payment handlers", async (t) => {
       if (capturedWallet == null) {
         throw new Error("expected Solana wallet to be captured");
       }
+      const wallet = capturedWallet;
 
-      const tx = new VersionedTransaction(
-        new TransactionMessage({
-          payerKey: capturedWallet.publicKey,
-          recentBlockhash: "11111111111111111111111111111111",
-          instructions: [],
-        }).compileToV0Message(),
+      const tx = pipe(
+        createTransactionMessage({ version: 0 }),
+        (message) => setTransactionMessageFeePayer(wallet.publicKey, message),
+        (message) =>
+          setTransactionMessageLifetimeUsingBlockhash(
+            {
+              blockhash: "11111111111111111111111111111111" as Blockhash,
+              lastValidBlockHeight: 0n,
+            },
+            message,
+          ),
+        compileTransaction,
       );
-      const unsignedTxHex = Buffer.from(tx.serialize()).toString("hex");
-      await capturedWallet.partiallySignTransaction(tx);
+      const unsignedTxHex = Buffer.from(
+        getBase64EncodedWireTransaction(tx),
+        "base64",
+      ).toString("hex");
+      const signedTx = await wallet.partiallySignTransaction(tx);
       t.same(signTransactionArgs, [
         "wallet-solana-id",
         "solana",
         unsignedTxHex,
       ]);
-      const signature = tx.signatures[0];
+      const signature = signedTx.signatures[wallet.publicKey];
       t.equal(signature?.length, 64);
       if (signature == null) {
         throw new Error("expected Solana signature to be attached");
@@ -1368,7 +1383,7 @@ await t.test("OWS payment handlers", async (t) => {
     async (t) => {
       let capturedWallet:
         | {
-            publicKey: PublicKey;
+            publicKey: Address;
           }
         | undefined;
 
@@ -1418,9 +1433,82 @@ await t.test("OWS payment handlers", async (t) => {
       await buildOwsPaymentHandler(createSolanaOwsConfig());
 
       t.equal(
-        capturedWallet?.publicKey.toBase58(),
+        capturedWallet?.publicKey,
         "So11111111111111111111111111111111111111112",
       );
+    },
+  );
+
+  await t.test(
+    "executes Solana OWS exact payments with the Kit-native handler",
+    async (t) => {
+      let signTransactionArgs: unknown[] | undefined;
+
+      const buildOwsPaymentHandler = createBuildOwsPaymentHandler({
+        getWallet: (() => ({
+          id: "wallet-solana-id",
+          name: "primary-solana",
+          accounts: [
+            {
+              chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              address: "So11111111111111111111111111111111111111112",
+              derivationPath: "m/44'/501'/0'/0'",
+            },
+          ],
+          createdAt: "",
+        })) as never,
+        signTransaction: ((...args: unknown[]) => {
+          signTransactionArgs = args;
+          return { signature: "11".repeat(64) };
+        }) as never,
+        signTypedData: (() => {
+          throw new Error("should not sign typed data for Solana");
+        }) as never,
+        createConnection: (() => ({})) as never,
+        lookupKnownSPLToken: (() => ({
+          address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          name: "USDC",
+        })) as never,
+        clusterToCAIP2: (() => ({
+          caip2: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        })) as never,
+        lookupKnownAsset: (() => undefined) as never,
+        lookupX402Network: (() => "") as never,
+        createSolanaPaymentHandler: solanaExact.createPaymentHandler,
+        createEvmPaymentHandler: (() => {
+          throw new Error("should not create an EVM handler for Solana");
+        }) as never,
+      });
+
+      const built = await buildOwsPaymentHandler(createSolanaOwsConfig());
+      const execers = await built.handler(
+        { request: new Request("https://example.com") },
+        [
+          {
+            scheme: "exact",
+            network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            amount: "1000",
+            asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            payTo: "So11111111111111111111111111111111111111112",
+            maxTimeoutSeconds: 60,
+            extra: {
+              feePayer: "So11111111111111111111111111111111111111112",
+              recentBlockhash: "11111111111111111111111111111111",
+              decimals: 6,
+            },
+          },
+        ],
+      );
+
+      t.equal(execers.length, 1);
+      const execer = execers[0];
+      if (execer == null) {
+        throw new Error("expected a Solana OWS payment execer");
+      }
+      const { payload } = await execer.exec();
+      const transactionPayload = payload as { transaction?: unknown };
+      t.type(transactionPayload.transaction, "string");
+      t.same(signTransactionArgs?.slice(0, 2), ["wallet-solana-id", "solana"]);
     },
   );
 
