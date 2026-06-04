@@ -58,9 +58,6 @@ export type PaymentMetadata = {
   assetSymbol?: string;
   network: string;
   decimals?: number;
-  txSignature?: string;
-  flexSessionId?: string;
-  flexEscrow?: string;
 };
 
 export type PaymentRetryHeaderResult = {
