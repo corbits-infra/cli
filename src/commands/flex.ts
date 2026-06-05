@@ -223,6 +223,65 @@ function printStatus(
   );
 }
 
+export function printTopupResult(
+  format: OutputFormat,
+  args: {
+    session: FlexSessionRecord;
+    amount: string;
+    signature: string;
+  },
+): void {
+  const asset = getSessionAssetDisplay(args.session);
+  const result = {
+    sessionId: args.session.id,
+    amount: formatDisplayTokenAmount({
+      amount: args.amount,
+      asset: asset.asset,
+      decimals: asset.decimals,
+    }),
+    asset: asset.asset,
+    network: formatPaymentOptionNetwork(args.session.network),
+    escrow: args.session.escrow,
+    totalDepositedAmount: formatDisplayTokenAmount({
+      amount: args.session.deposited_amount,
+      asset: asset.asset,
+      decimals: asset.decimals,
+    }),
+    txSignature: args.signature,
+  };
+
+  if (format === "json") {
+    printJSON(result);
+    return;
+  }
+  if (format === "yaml") {
+    printYaml(result);
+    return;
+  }
+  printTable(
+    [
+      "Session",
+      "Amount",
+      "Asset",
+      "Network",
+      "Escrow",
+      "Total Deposited",
+      "Tx Signature",
+    ],
+    [
+      [
+        result.sessionId,
+        result.amount,
+        result.asset,
+        result.network,
+        result.escrow,
+        result.totalDepositedAmount,
+        result.txSignature,
+      ],
+    ],
+  );
+}
+
 async function promptForFlexConfirmation(args: {
   session: FlexSessionRecord;
   amount: string;
@@ -335,8 +394,10 @@ const flexTopup = command({
       long: "yes",
       description: "Run without an interactive confirmation prompt",
     }),
+    format: formatFlag,
   },
-  handler: async ({ sessionId, amount, yes }) => {
+  handler: async ({ sessionId, amount, yes, format: formatArg }) => {
+    const format = await resolveOutputFormat(formatArg);
     const { resolved } = await loadRequiredConfig();
     const store = await readFlexSessionStore();
     const eligibleViews =
@@ -364,11 +425,16 @@ const flexTopup = command({
         throw new Error("Flex top-up cancelled");
       }
     }
-    await topUpFlexSession({
+    const result = await topUpFlexSession({
       config: resolved,
       session,
       amount: parsedAmount,
       note: (message) => process.stderr.write(`${message}\n`),
+    });
+    printTopupResult(format, {
+      session: result.session,
+      amount: parsedAmount,
+      signature: result.signature,
     });
   },
 });
