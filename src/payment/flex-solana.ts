@@ -323,9 +323,19 @@ async function getTokenAccountBalance(
   try {
     const { value } = await rpc.getTokenAccountBalance(tokenAccount).send();
     return value.amount;
-  } catch {
-    return "0";
+  } catch (err) {
+    if (isMissingTokenAccountBalanceError(err)) {
+      return "0";
+    }
+    throw err;
   }
+}
+
+export function isMissingTokenAccountBalanceError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /could not find account|token account not found|account does not exist/i.test(
+    message,
+  );
 }
 
 async function getSessionReadiness(
