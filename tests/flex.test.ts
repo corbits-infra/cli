@@ -10,7 +10,10 @@ import {
   V2_PAYMENT_REQUIRED_HEADER,
 } from "@faremeter/types/x402v2";
 
-import { createCallCommand } from "../src/commands/call.js";
+import {
+  createCallCommand,
+  isSelectedFlexInspectionRequirement,
+} from "../src/commands/call.js";
 import {
   filterEligibleTopupSessionViews,
   parsePositiveDisplayAmount,
@@ -148,6 +151,62 @@ await t.test(
       );
       t.equal(selection.selected.minGracePeriodSlots, 12n);
     }
+    t.end();
+  },
+);
+
+await t.test(
+  "matches inspect enrichment only to the selected Flex row",
+  (t) => {
+    const selection = selectFlexRequirement({
+      accepts: [flexRequirement],
+      config: resolvedConfig,
+    });
+    t.equal(selection.kind, "selected");
+    if (selection.kind !== "selected") {
+      t.end();
+      return;
+    }
+
+    const selectedRow = {
+      scheme: "flex",
+      network: "solana-devnet",
+      asset: "USDC",
+      assetAddress: flexRequirement.asset,
+      amount: "0.001000",
+      payTo: flexRequirement.payTo,
+      maxTimeoutSeconds: flexRequirement.maxTimeoutSeconds,
+      extra: flexRequirement.extra,
+    };
+
+    t.equal(
+      isSelectedFlexInspectionRequirement(selectedRow, selection.selected),
+      true,
+    );
+    t.equal(
+      isSelectedFlexInspectionRequirement(
+        {
+          ...selectedRow,
+          asset: "USDT",
+          assetAddress: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        },
+        selection.selected,
+      ),
+      false,
+    );
+    t.equal(
+      isSelectedFlexInspectionRequirement(
+        {
+          ...selectedRow,
+          extra: {
+            ...flexRequirement.extra,
+            facilitator: "OtherFacilitator111111111111111111111111",
+          },
+        },
+        selection.selected,
+      ),
+      false,
+    );
     t.end();
   },
 );

@@ -44,6 +44,7 @@ import {
 } from "../payment/flex-solana.js";
 import {
   formatFlexRequirementMismatch,
+  type FlexRequirementDetails,
   hasFlexRequirements,
   isFlexScheme,
   selectFlexRequirement,
@@ -51,6 +52,7 @@ import {
 import {
   getPaymentRequirementInspection,
   printPaymentRequirementInspection,
+  type PaymentRequirementInspection,
 } from "../payment/options.js";
 import { formatPaymentOptionNetwork } from "../payment/requirements.js";
 import {
@@ -128,6 +130,20 @@ type HistoryPaymentInfo = {
   assetSymbol?: string;
   decimals?: number;
 };
+
+export function isSelectedFlexInspectionRequirement(
+  requirement: PaymentRequirementInspection["requirements"][number],
+  selected: FlexRequirementDetails,
+): boolean {
+  const facilitator = requirement.extra?.facilitator;
+  return (
+    isFlexScheme(requirement.scheme) &&
+    requirement.network === formatPaymentOptionNetwork(selected.network) &&
+    requirement.assetAddress === selected.asset &&
+    typeof facilitator === "string" &&
+    facilitator === selected.facilitator
+  );
+}
 
 const USD_NORMALIZATION_STABLECOIN_SYMBOLS = new Set([
   "USDC",
@@ -1004,7 +1020,12 @@ export function createCallCommand(deps: CallDeps) {
                 requirement: selection.selected,
               });
               for (const requirement of inspection.requirements) {
-                if (!isFlexScheme(requirement.scheme)) {
+                if (
+                  !isSelectedFlexInspectionRequirement(
+                    requirement,
+                    selection.selected,
+                  )
+                ) {
                   continue;
                 }
                 requirement.flex = {
