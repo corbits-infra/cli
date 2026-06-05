@@ -56,8 +56,7 @@ export type PaymentRequirementInspection = {
         onChainAvailableAmount?: string;
         onChainVaultBalance?: string;
         onChainPendingAmount?: string;
-        healthy: boolean;
-        reason?: string;
+        issue?: string;
       }[];
     };
   }[];
@@ -203,11 +202,11 @@ export function printPaymentRequirementInspection(
       formatExtra(requirement.extra),
       requirement.flex?.matchingSessions
         ?.map((session) =>
-          session.healthy
+          session.issue == null
             ? `${session.id} onChainAvailable=${
                 session.onChainAvailableAmount ?? "unknown"
               }`
-            : `${session.id} ${session.reason ?? "unhealthy"}`,
+            : `${session.id} ${session.issue}`,
         )
         .join("; ") ?? "",
     ]),

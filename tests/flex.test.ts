@@ -296,7 +296,6 @@ await t.test(
     };
     const view = (session: FlexSessionRecord): FlexSessionRuntimeView => ({
       session,
-      healthy: true,
       availableAmount: "1000",
       vaultBalanceAmount: "1000",
       pendingAmount: "0",
@@ -344,7 +343,7 @@ await t.test("preserves structured Flex status rows", (t) => {
     updated_at_ms: 1,
   };
 
-  t.same(statusRows([{ session, healthy: true, availableAmount: "2500" }]), [
+  t.same(statusRows([{ session, availableAmount: "2500" }]), [
     {
       id: "eligible",
       status: "open",
@@ -358,8 +357,7 @@ await t.test("preserves structured Flex status rows", (t) => {
       onChainVaultBalance: "",
       onChainAvailableAmount: "2500",
       onChainPendingAmount: "",
-      healthy: true,
-      reason: "",
+      issue: "",
     },
   ]);
 
@@ -367,8 +365,7 @@ await t.test("preserves structured Flex status rows", (t) => {
     statusRows([
       {
         session,
-        healthy: false,
-        reason: "session key is not active",
+        issue: "session key is not active",
       },
     ])[0],
     {
@@ -384,8 +381,7 @@ await t.test("preserves structured Flex status rows", (t) => {
       onChainVaultBalance: "",
       onChainAvailableAmount: "",
       onChainPendingAmount: "",
-      healthy: false,
-      reason: "session key is not active",
+      issue: "session key is not active",
     },
   );
   t.end();
@@ -408,30 +404,26 @@ await t.test("formats Flex status rows for display", (t) => {
     updated_at_ms: 1,
   };
 
-  t.same(
-    statusDisplayRows([{ session, healthy: true, availableAmount: "2500" }]),
-    [
-      {
-        id: "eligible",
-        status: "open",
-        network: "solana-devnet",
-        asset: "USDC",
-        assetAddress: flexRequirement.asset,
-        deposited: "0.001000",
-        available: "0.002500",
-        owner: resolvedConfig.activeWallet.address,
-        escrow: "Escrow1111111111111111111111111111111111",
-        sessionKey: "SessionKey11111111111111111111111111111",
-      },
-    ],
-  );
+  t.same(statusDisplayRows([{ session, availableAmount: "2500" }]), [
+    {
+      id: "eligible",
+      status: "open",
+      network: "solana-devnet",
+      asset: "USDC",
+      assetAddress: flexRequirement.asset,
+      deposited: "0.001000",
+      available: "0.002500",
+      owner: resolvedConfig.activeWallet.address,
+      escrow: "Escrow1111111111111111111111111111111111",
+      sessionKey: "SessionKey11111111111111111111111111111",
+    },
+  ]);
 
   t.same(
     statusDisplayRows([
       {
         session,
-        healthy: false,
-        reason: "session key is not active",
+        issue: "session key is not active",
       },
     ])[0],
     {
