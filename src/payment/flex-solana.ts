@@ -57,7 +57,7 @@ import {
   upsertFlexSessionRecord,
   writeFlexSessionKeyMaterial,
   type FlexRequirementDetails,
-  type FlexSessionHealth,
+  type FlexSessionReadiness,
   type FlexSessionRecord,
   type FlexSessionRuntimeView,
 } from "./flex.js";
@@ -327,15 +327,15 @@ async function getTokenAccountBalance(
   }
 }
 
-async function getSessionHealth(
+async function getSessionReadiness(
   rpc: SolanaRpc,
   session: FlexSessionRecord,
   requiredAmount: string,
-): Promise<FlexSessionHealth> {
+): Promise<FlexSessionReadiness> {
   const escrowAddress = toSolanaAddress(session.escrow);
   const escrow = await fetchEscrowAccount(asFlexReadRpc(rpc), escrowAddress);
   if (escrow == null) {
-    return { kind: "unhealthy", session, reason: "escrow not found on-chain" };
+    return { kind: "unusable", session, issue: "escrow not found on-chain" };
   }
 
   const sessionKey = await fetchSessionKey(
@@ -344,13 +344,13 @@ async function getSessionHealth(
   );
   if (sessionKey == null) {
     return {
-      kind: "unhealthy",
+      kind: "unusable",
       session,
-      reason: "session key account not found on-chain",
+      issue: "session key account not found on-chain",
     };
   }
   if (!sessionKey.active) {
-    return { kind: "unhealthy", session, reason: "session key is not active" };
+    return { kind: "unusable", session, issue: "session key is not active" };
   }
 
   const pending = await findPendingSettlementsByEscrow(
@@ -369,7 +369,7 @@ async function getSessionHealth(
 
   if (compareBaseUnitAmounts(availableAmount, requiredAmount) >= 0) {
     return {
-      kind: "healthy",
+      kind: "ready",
       session,
       availableAmount,
       vaultBalanceAmount: vaultBalance,
@@ -410,23 +410,21 @@ export async function getFlexSessionViews(args: {
   const views: FlexSessionRuntimeView[] = [];
   for (const session of sessions) {
     try {
-      const health = await getSessionHealth(rpc, session, "0");
-      if (health.kind === "unhealthy") {
-        views.push({ session, healthy: false, reason: health.reason });
+      const readiness = await getSessionReadiness(rpc, session, "0");
+      if (readiness.kind === "unusable") {
+        views.push({ session, issue: readiness.issue });
       } else {
         views.push({
           session,
-          healthy: true,
-          availableAmount: health.availableAmount,
-          vaultBalanceAmount: health.vaultBalanceAmount,
-          pendingAmount: health.pendingAmount,
+          availableAmount: readiness.availableAmount,
+          vaultBalanceAmount: readiness.vaultBalanceAmount,
+          pendingAmount: readiness.pendingAmount,
         });
       }
     } catch (err) {
       views.push({
         session,
-        healthy: false,
-        reason: err instanceof Error ? err.message : String(err),
+        issue: err instanceof Error ? err.message : String(err),
       });
     }
   }
@@ -441,7 +439,7 @@ async function chooseExistingSession(args: {
   confirm?: EnsureFlexSessionArgs["confirm"];
   rpc: SolanaRpc;
   storePath?: string;
-}): Promise<FlexSessionHealth | null> {
+}): Promise<FlexSessionReadiness | null> {
   const store = await readFlexSessionStore(args.storePath);
   const matching = findMatchingFlexSessions({
     sessions: store.sessions,
@@ -461,27 +459,29 @@ async function chooseExistingSession(args: {
     );
   }
 
-  const healths = await Promise.all(
+  const readinessResults = await Promise.all(
     candidates.map((session) =>
-      getSessionHealth(args.rpc, session, args.requiredAmount),
+      getSessionReadiness(args.rpc, session, args.requiredAmount),
     ),
   );
-  const usable = healths.filter((health) => health.kind !== "unhealthy");
+  const usable = readinessResults.filter(
+    (readiness) => readiness.kind !== "unusable",
+  );
 
   if (args.sessionId != null) {
     const selected = usable[0];
     if (selected == null) {
-      const unhealthy = healths[0];
+      const unusable = readinessResults[0];
       throw new Error(
-        unhealthy?.kind === "unhealthy"
-          ? `Flex session ${args.sessionId} is not usable: ${unhealthy.reason}`
+        unusable?.kind === "unusable"
+          ? `Flex session ${args.sessionId} is not usable: ${unusable.issue}`
           : `Flex session ${args.sessionId} is not usable`,
       );
     }
     return selected;
   }
 
-  const fullyFunded = usable.filter((health) => health.kind === "healthy");
+  const fullyFunded = usable.filter((readiness) => readiness.kind === "ready");
   if (fullyFunded.length === 1) {
     return fullyFunded[0] ?? null;
   }
@@ -647,7 +647,7 @@ export async function ensureFlexSession(
     ...(args.storePath == null ? {} : { storePath: args.storePath }),
   });
 
-  if (selected?.kind === "healthy") {
+  if (selected?.kind === "ready") {
     args.note?.(`Using Flex session ${selected.session.id}`);
     return {
       session: selected.session,

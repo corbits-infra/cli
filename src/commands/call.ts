@@ -1021,8 +1021,7 @@ export function createCallCommand(deps: CallDeps) {
                     ...(view.pendingAmount == null
                       ? {}
                       : { onChainPendingAmount: view.pendingAmount }),
-                    healthy: view.healthy,
-                    ...(view.reason == null ? {} : { reason: view.reason }),
+                    ...(view.issue == null ? {} : { issue: view.issue }),
                   })),
                 };
               }

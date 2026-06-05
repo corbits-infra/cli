@@ -121,12 +121,12 @@ function parseFlexTopupAmount(
 function getSessionIssueDisplay(view: FlexSessionRuntimeView): {
   issue?: string;
 } {
-  const reason = view.reason ?? view.session.close_error;
-  if (view.healthy) {
+  const issue = view.issue ?? view.session.close_error;
+  if (issue == null || issue.length === 0) {
     return {};
   }
   return {
-    issue: reason == null || reason.length === 0 ? "unhealthy" : reason,
+    issue,
   };
 }
 
@@ -144,8 +144,7 @@ export function statusRows(views: FlexSessionRuntimeView[]) {
     onChainVaultBalance: view.vaultBalanceAmount ?? "",
     onChainAvailableAmount: view.availableAmount ?? "",
     onChainPendingAmount: view.pendingAmount ?? "",
-    healthy: view.healthy,
-    reason: view.reason ?? view.session.close_error ?? "",
+    issue: view.issue ?? view.session.close_error ?? "",
   }));
 }
 
@@ -197,8 +196,8 @@ function printStatus(
     (row) => row.status !== "open" || row.issue != null,
   );
   const head = showState
-    ? ["ID", "Network", "Asset", "Deposited", "Available", "State"]
-    : ["ID", "Network", "Asset", "Deposited", "Available"];
+    ? ["ID", "Network", "Asset", "Total Deposited", "Available", "State"]
+    : ["ID", "Network", "Asset", "Total Deposited", "Available"];
   printTable(
     head,
     displayRows.map((row) => {

@@ -71,9 +71,9 @@ export type FlexRequirementSelection =
     }
   | Exclude<PaymentRequirementSelection, { kind: "selected" }>;
 
-export type FlexSessionHealth =
+export type FlexSessionReadiness =
   | {
-      kind: "healthy";
+      kind: "ready";
       session: FlexSessionRecord;
       availableAmount: string;
       vaultBalanceAmount: string;
@@ -88,9 +88,9 @@ export type FlexSessionHealth =
       shortfallAmount: string;
     }
   | {
-      kind: "unhealthy";
+      kind: "unusable";
       session: FlexSessionRecord;
-      reason: string;
+      issue: string;
     };
 
 export type FlexSessionRuntimeView = {
@@ -98,8 +98,7 @@ export type FlexSessionRuntimeView = {
   availableAmount?: string;
   vaultBalanceAmount?: string;
   pendingAmount?: string;
-  healthy: boolean;
-  reason?: string;
+  issue?: string;
 };
 
 export type FlexSessionKeyMaterial = JsonWebKey;
