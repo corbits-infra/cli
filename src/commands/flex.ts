@@ -12,6 +12,7 @@ import { createInterface } from "node:readline/promises";
 import { loadRequiredConfig } from "../config/index.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 import {
+  formatCompactDisplayTokenAmount,
   formatDisplayTokenAmount,
   printJSON,
   printTable,
@@ -68,7 +69,7 @@ function formatSessionAmountWithAsset(
   amount: string,
 ): string {
   const asset = getSessionAssetDisplay(session);
-  return `${formatDisplayTokenAmount({
+  return `${formatCompactDisplayTokenAmount({
     amount,
     asset: asset.asset,
     decimals: asset.decimals,

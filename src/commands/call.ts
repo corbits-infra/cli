@@ -21,6 +21,7 @@ import {
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
+  formatCompactDisplayTokenAmount,
   formatJSON,
   formatDisplayTokenAmount,
   formatYaml,
@@ -559,7 +560,7 @@ async function promptForFlexConfirmation(
   args: FlexConfirmArgs,
 ): Promise<boolean> {
   const asset = args.requirement.symbol ?? args.requirement.asset;
-  const amount = `${formatDisplayTokenAmount({
+  const amount = `${formatCompactDisplayTokenAmount({
     amount: args.amount,
     asset,
     ...(args.requirement.decimals == null
