@@ -278,7 +278,7 @@ async function sendInstructions(
   rpc: SolanaRpc,
   feePayer: KeyPairSigner,
   instructions: Instruction[],
-): Promise<void> {
+): Promise<Signature> {
   const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
   const message = pipe(
     createTransactionMessage({ version: 0 }),
@@ -292,6 +292,7 @@ async function sendInstructions(
     .sendTransaction(wireTransaction, { encoding: "base64" })
     .send();
   await confirmSignature(rpc, signature);
+  return signature;
 }
 
 async function findOwnerTokenAccount(args: {
@@ -510,7 +511,7 @@ async function topUpSession(args: {
   mint: string;
   amount: string;
   storePath?: string;
-}): Promise<FlexSessionRecord> {
+}): Promise<{ session: FlexSessionRecord; signature: string }> {
   const mint = toSolanaAddress(args.mint);
   const sourceTokenAccount = await findOwnerTokenAccount({
     rpc: args.rpc,
@@ -524,10 +525,10 @@ async function topUpSession(args: {
     source: sourceTokenAccount,
     amount: BigInt(args.amount),
   });
-  await sendInstructions(args.rpc, args.owner, [depositIx]);
+  const signature = await sendInstructions(args.rpc, args.owner, [depositIx]);
   const updated = applyFlexDeposit(args.session, args.amount);
   await upsertFlexSessionRecord(updated, args.storePath);
-  return updated;
+  return { session: updated, signature };
 }
 
 async function createSession(args: {
@@ -677,7 +678,7 @@ export async function ensureFlexSession(
     args.note?.(
       `Topping up Flex session ${selected.session.id} by ${formatFlexRequirementAmount(topupAmount, args.requirement)}`,
     );
-    const session = await topUpSession({
+    const topup = await topUpSession({
       config: args.config,
       owner,
       rpc,
@@ -687,7 +688,7 @@ export async function ensureFlexSession(
       ...(args.storePath == null ? {} : { storePath: args.storePath }),
     });
     return {
-      session,
+      session: topup.session,
       availableAmount: targetAmount,
       created: false,
       toppedUpAmount: topupAmount,
@@ -811,7 +812,7 @@ export async function topUpFlexSession(args: {
   amount: string;
   storePath?: string;
   note?: (message: string) => void;
-}): Promise<FlexSessionRecord> {
+}): Promise<{ session: FlexSessionRecord; signature: string }> {
   if (args.config.payment.family !== "solana") {
     throw new ConfigError(
       "Flex payments are only supported on Solana networks",

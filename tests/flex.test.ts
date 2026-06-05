@@ -14,6 +14,7 @@ import { createCallCommand } from "../src/commands/call.js";
 import {
   filterEligibleTopupSessionViews,
   parsePositiveDisplayAmount,
+  printTopupResult,
   statusDisplayRows,
   statusRows,
 } from "../src/commands/flex.js";
@@ -30,7 +31,11 @@ import {
   buildFlexPaymentHeader,
   getFlexEscrowTimeoutSlots,
 } from "../src/payment/flex-solana.js";
-import { captureCombinedOutput, captureStderr } from "./test-helpers.js";
+import {
+  captureCombinedOutput,
+  captureStderr,
+  captureStdout,
+} from "./test-helpers.js";
 
 const resolvedConfig = {
   version: 1,
@@ -441,6 +446,44 @@ await t.test("formats Flex status rows for display", (t) => {
   );
   t.end();
 });
+
+await t.test(
+  "prints Flex top-up result with total deposited amount",
+  async (t) => {
+    const session: FlexSessionRecord = {
+      id: "eligible",
+      status: "open",
+      owner_address: resolvedConfig.activeWallet.address,
+      network: flexRequirement.network,
+      mint: flexRequirement.asset,
+      facilitator: flexRequirement.extra.facilitator,
+      escrow: "Escrow1111111111111111111111111111111111",
+      session_key_address: "SessionKey11111111111111111111111111111",
+      session_key_account: "SessionPda11111111111111111111111111111",
+      session_key_path: "/tmp/flex-session-key.json",
+      deposited_amount: "1500000",
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+
+    const output = await captureStdout(() =>
+      printTopupResult("json", {
+        session,
+        amount: "500000",
+        signature: "tx-sig",
+      }),
+    );
+    t.same(JSON.parse(output), {
+      sessionId: "eligible",
+      amount: "0.500000",
+      asset: "USDC",
+      network: "solana-devnet",
+      escrow: "Escrow1111111111111111111111111111111111",
+      totalDepositedAmount: "1.500000",
+      txSignature: "tx-sig",
+    });
+  },
+);
 
 await t.test("uses --yes for non-interactive Flex authorization", async (t) => {
   const priorExitCode = process.exitCode;
