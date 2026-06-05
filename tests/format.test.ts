@@ -2,6 +2,7 @@
 
 import t from "tap";
 import {
+  formatCompactDisplayTokenAmount,
   formatTokenAmount,
   formatPrice,
   printFormatted,
@@ -44,6 +45,33 @@ await t.test("formatTokenAmount", async (t) => {
       t.end();
     },
   );
+});
+
+await t.test("formatCompactDisplayTokenAmount", async (t) => {
+  await t.test("trims insignificant trailing decimal zeroes", async (t) => {
+    t.equal(
+      formatCompactDisplayTokenAmount({
+        amount: "1000000",
+        asset: "USDC",
+      }),
+      "1",
+    );
+    t.equal(
+      formatCompactDisplayTokenAmount({
+        amount: "1050000",
+        asset: "USDC",
+      }),
+      "1.05",
+    );
+    t.equal(
+      formatCompactDisplayTokenAmount({
+        amount: "1",
+        asset: "USDC",
+      }),
+      "0.000001",
+    );
+    t.end();
+  });
 });
 
 await t.test("printJSON", async (t) => {

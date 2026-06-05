@@ -72,6 +72,18 @@ export function formatDisplayTokenAmount(args: {
     : formatTokenAmount(args.amount, decimals);
 }
 
+export function formatCompactDisplayTokenAmount(args: {
+  amount: string;
+  asset: string;
+  decimals?: number | null;
+}): string {
+  const formatted = formatDisplayTokenAmount(args);
+  if (!formatted.includes(".")) {
+    return formatted;
+  }
+  return formatted.replace(/\.?0+$/, "");
+}
+
 export function tryParseJSON(text: string): unknown {
   if (text.trim().length === 0) {
     return undefined;
