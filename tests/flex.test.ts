@@ -3,12 +3,20 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { webcrypto } from "node:crypto";
 import t from "tap";
 import { X_PAYMENT_HEADER } from "@faremeter/types/x402";
 import {
   V2_PAYMENT_HEADER,
   V2_PAYMENT_REQUIRED_HEADER,
 } from "@faremeter/types/x402v2";
+import { Keypair } from "@solana/web3.js";
+import {
+  address,
+  type Address,
+  type Instruction,
+  type Signature,
+} from "@solana/kit";
 
 import {
   createCallCommand,
@@ -32,7 +40,10 @@ import {
 } from "../src/payment/flex.js";
 import {
   buildFlexPaymentHeader,
+  ensureFlexSession,
   getFlexEscrowTimeoutSlots,
+  isMissingTokenAccountBalanceError,
+  type FlexSolanaDeps,
 } from "../src/payment/flex-solana.js";
 import {
   captureCombinedOutput,
@@ -132,6 +143,32 @@ function createV1PaymentRequiredResponse(): Response {
 
 function decodeHeaderPayload(header: { value: string }): unknown {
   return JSON.parse(Buffer.from(header.value, "base64").toString("utf8"));
+}
+
+function randomAddress(): Address {
+  return address(Keypair.generate().publicKey.toBase58());
+}
+
+function testInstruction(
+  label: string,
+  accounts: { address: Address }[] = [],
+): Instruction {
+  return {
+    programAddress: address("11111111111111111111111111111111"),
+    accounts,
+    data: new Uint8Array(),
+    label,
+  } as unknown as Instruction;
+}
+
+function instructionLabel(instruction: Instruction): string {
+  return (
+    (
+      instruction as unknown as {
+        label?: string;
+      }
+    ).label ?? "unknown"
+  );
 }
 
 await t.test(
@@ -286,6 +323,28 @@ await t.test(
   },
 );
 
+await t.test("classifies only missing token account balance errors", (t) => {
+  t.equal(
+    isMissingTokenAccountBalanceError(
+      new Error("Invalid param: could not find account"),
+    ),
+    true,
+  );
+  t.equal(
+    isMissingTokenAccountBalanceError(new Error("token account not found")),
+    true,
+  );
+  t.equal(
+    isMissingTokenAccountBalanceError(new Error("429 Too Many Requests")),
+    false,
+  );
+  t.equal(
+    isMissingTokenAccountBalanceError(new Error("failed to fetch")),
+    false,
+  );
+  t.end();
+});
+
 await t.test("parses positive Flex display amounts", (t) => {
   t.equal(parsePositiveDisplayAmount("--amount", "1", 6), "1000000");
   t.equal(parsePositiveDisplayAmount("--amount", "0.25", 6), "250000");
@@ -304,6 +363,102 @@ await t.test("parses positive Flex display amounts", (t) => {
   );
   t.end();
 });
+
+await t.test(
+  "stores a new Flex session before sending the initial deposit",
+  async (t) => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "corbits-flex-"));
+    const storePath = path.join(tempDir, "flex-sessions.json");
+    const ownerKeypair = Keypair.generate();
+    const escrowAddress = randomAddress();
+    const facilitatorAddress = randomAddress();
+    const sessionKeyAccount = randomAddress();
+    const sessionKeyAddress = randomAddress();
+    const sourceTokenAccount = randomAddress();
+    const sends: string[] = [];
+    const deps: Partial<FlexSolanaDeps> = {
+      readTextFile: async () => JSON.stringify([...ownerKeypair.secretKey]),
+      createRpc: (() =>
+        ({
+          getTokenAccountsByOwner: () => ({
+            send: async () => ({
+              value: [{ pubkey: sourceTokenAccount }],
+            }),
+          }),
+        }) as unknown as ReturnType<
+          FlexSolanaDeps["createRpc"]
+        >) as FlexSolanaDeps["createRpc"],
+      getCreateEscrowInstructionAsync: (async () =>
+        testInstruction("create", [
+          { address: randomAddress() },
+          { address: escrowAddress },
+        ])) as unknown as FlexSolanaDeps["getCreateEscrowInstructionAsync"],
+      getDepositInstructionAsync: (async () =>
+        testInstruction(
+          "deposit",
+        )) as unknown as FlexSolanaDeps["getDepositInstructionAsync"],
+      getRegisterSessionKeyInstructionAsync: (async () =>
+        testInstruction("register", [
+          { address: randomAddress() },
+          { address: randomAddress() },
+          { address: sessionKeyAccount },
+        ])) as unknown as FlexSolanaDeps["getRegisterSessionKeyInstructionAsync"],
+      generateFlexSessionKeyPair: async () =>
+        webcrypto.subtle.generateKey("Ed25519", true, [
+          "sign",
+          "verify",
+        ]) as Promise<webcrypto.CryptoKeyPair>,
+      getAddressFromPublicKey: async () => sessionKeyAddress,
+      sendInstructions: async (_rpc, _feePayer, instructions) => {
+        const firstInstruction = instructions[0];
+        if (firstInstruction == null) {
+          throw new Error("expected one instruction");
+        }
+        const label = instructionLabel(firstInstruction);
+        if (label === "deposit") {
+          const store = await readFlexSessionStore(storePath);
+          t.equal(store.sessions.length, 1);
+          t.equal(store.sessions[0]?.deposited_amount, "0");
+        }
+        sends.push(label);
+        return "tx-signature" as Signature;
+      },
+    };
+
+    const result = await ensureFlexSession(
+      {
+        config: {
+          ...resolvedConfig,
+          activeWallet: {
+            ...resolvedConfig.activeWallet,
+            address: ownerKeypair.publicKey.toBase58(),
+            expandedPath: "/tmp/flex-owner.json",
+          },
+        },
+        requirement: {
+          requirement: flexRequirement,
+          scheme: "flex",
+          network: flexRequirement.network,
+          amount: flexRequirement.amount,
+          asset: flexRequirement.asset,
+          symbol: "USDC",
+          decimals: 6,
+          facilitator: facilitatorAddress,
+          minGracePeriodSlots: 12n,
+        },
+        amount: flexRequirement.amount,
+        allowCreateOrTopup: true,
+        storePath,
+      },
+      deps,
+    );
+
+    t.same(sends, ["create", "register", "deposit"]);
+    t.equal(result.session.deposited_amount, flexRequirement.amount);
+    const store = await readFlexSessionStore(storePath);
+    t.equal(store.sessions[0]?.deposited_amount, flexRequirement.amount);
+  },
+);
 
 await t.test("persists and matches Flex session runtime records", async (t) => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "corbits-flex-"));
