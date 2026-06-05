@@ -131,6 +131,12 @@ export type FlexSolanaDeps = {
   readTextFile: (path: string, encoding: BufferEncoding) => Promise<string>;
   createRpc: (rpcURL: string) => SolanaRpc;
   createFlexPaymentHandler: typeof createFlexPaymentHandler;
+  getCreateEscrowInstructionAsync: typeof getCreateEscrowInstructionAsync;
+  getDepositInstructionAsync: typeof getDepositInstructionAsync;
+  getRegisterSessionKeyInstructionAsync: typeof getRegisterSessionKeyInstructionAsync;
+  generateFlexSessionKeyPair: typeof generateFlexSessionKeyPair;
+  getAddressFromPublicKey: typeof getAddressFromPublicKey;
+  sendInstructions: typeof sendInstructions;
   now: () => number;
 };
 
@@ -547,6 +553,15 @@ async function createSession(args: {
   rpc: SolanaRpc;
   requirement: FlexRequirementDetails;
   amount: string;
+  deps: Pick<
+    FlexSolanaDeps,
+    | "generateFlexSessionKeyPair"
+    | "getAddressFromPublicKey"
+    | "getCreateEscrowInstructionAsync"
+    | "getDepositInstructionAsync"
+    | "getRegisterSessionKeyInstructionAsync"
+    | "sendInstructions"
+  >;
   storePath?: string;
 }): Promise<FlexSessionRecord> {
   const mint = toSolanaAddress(args.requirement.asset);
@@ -558,7 +573,7 @@ async function createSession(args: {
   const { refundTimeoutSlots, deadmanTimeoutSlots } = getFlexEscrowTimeoutSlots(
     args.requirement.minGracePeriodSlots,
   );
-  const createIx = await getCreateEscrowInstructionAsync({
+  const createIx = await args.deps.getCreateEscrowInstructionAsync({
     owner: args.owner,
     index: BigInt(Date.now()),
     facilitator: toSolanaAddress(args.requirement.facilitator),
@@ -571,22 +586,13 @@ async function createSession(args: {
     throw new Error("escrow account meta missing");
   }
   const escrowAddress = escrowMeta.address;
-  await sendInstructions(args.rpc, args.owner, [createIx]);
+  await args.deps.sendInstructions(args.rpc, args.owner, [createIx]);
 
-  const depositIx = await getDepositInstructionAsync({
-    depositor: args.owner,
-    escrow: escrowAddress,
-    mint,
-    source: sourceTokenAccount,
-    amount: BigInt(args.amount),
-  });
-  await sendInstructions(args.rpc, args.owner, [depositIx]);
-
-  const sessionKeyPair = await generateFlexSessionKeyPair();
-  const sessionKeyAddress = await getAddressFromPublicKey(
+  const sessionKeyPair = await args.deps.generateFlexSessionKeyPair();
+  const sessionKeyAddress = await args.deps.getAddressFromPublicKey(
     sessionKeyPair.publicKey,
   );
-  const registerIx = await getRegisterSessionKeyInstructionAsync({
+  const registerIx = await args.deps.getRegisterSessionKeyInstructionAsync({
     owner: args.owner,
     escrow: escrowAddress,
     sessionKey: sessionKeyAddress,
@@ -606,12 +612,24 @@ async function createSession(args: {
     escrow: escrowAddress,
     sessionKeyAddress,
     sessionKeyAccount: sessionKeyMeta.address,
-    depositedAmount: args.amount,
+    depositedAmount: "0",
     ...(args.storePath == null ? {} : { storePath: args.storePath }),
   });
   await writeFlexSessionKeyMaterial(record, sessionKeyPair);
-  await sendInstructions(args.rpc, args.owner, [registerIx]);
-  return record;
+  await args.deps.sendInstructions(args.rpc, args.owner, [registerIx]);
+
+  const depositIx = await args.deps.getDepositInstructionAsync({
+    depositor: args.owner,
+    escrow: escrowAddress,
+    mint,
+    source: sourceTokenAccount,
+    amount: BigInt(args.amount),
+  });
+  await args.deps.sendInstructions(args.rpc, args.owner, [depositIx]);
+
+  const fundedRecord = applyFlexDeposit(record, args.amount);
+  await upsertFlexSessionRecord(fundedRecord, args.storePath);
+  return fundedRecord;
 }
 
 export function getFlexEscrowTimeoutSlots(minGracePeriodSlots: bigint): {
@@ -729,6 +747,7 @@ export async function ensureFlexSession(
     rpc,
     requirement: args.requirement,
     amount: targetAmount,
+    deps,
     ...(args.storePath == null ? {} : { storePath: args.storePath }),
   });
   return {
@@ -863,5 +882,11 @@ export const defaultFlexSolanaDeps: FlexSolanaDeps = {
   readTextFile: fs.readFile,
   createRpc: createSolanaRpc,
   createFlexPaymentHandler,
+  getCreateEscrowInstructionAsync,
+  getDepositInstructionAsync,
+  getRegisterSessionKeyInstructionAsync,
+  generateFlexSessionKeyPair,
+  getAddressFromPublicKey,
+  sendInstructions,
   now: Date.now,
 };
