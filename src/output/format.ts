@@ -1,5 +1,6 @@
 import Table from "cli-table3";
 import { stringify as yamlStringify } from "yaml";
+import { formatTableHead } from "./brand.js";
 
 export type OutputFormat = "table" | "json" | "yaml";
 
@@ -29,7 +30,7 @@ export function printYaml(data: unknown): void {
 
 export function printTable(head: string[], rows: string[][]): void {
   const table = new Table({
-    head,
+    head: formatTableHead(head),
     style: {
       head: [],
       border: [],

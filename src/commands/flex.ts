@@ -21,6 +21,14 @@ import {
   writeLine,
 } from "../output/format.js";
 import {
+  formatKeyValue,
+  formatProgressNote,
+  formatPromptChoice,
+  formatSectionTitle,
+  formatStatus,
+  isBrandOutputEnabled,
+} from "../output/brand.js";
+import {
   getFlexSessionViews,
   topUpFlexSession,
 } from "../payment/flex-solana.js";
@@ -190,7 +198,7 @@ function printStatus(
   }
   const displayRows = statusDisplayRows(views);
   if (displayRows.length === 0) {
-    writeLine("No Flex sessions found.");
+    writeLine(formatStatus("No Flex sessions found."));
     return;
   }
   const showState = displayRows.some(
@@ -289,7 +297,8 @@ async function promptForFlexConfirmation(args: {
   if (!process.stdin.isTTY) {
     throw new Error("Flex top-up requires an interactive terminal or --yes");
   }
-  const prompt = `Top up Flex session ${args.session.id} by ${formatSessionAmountWithAsset(args.session, args.amount)}? [y/N] `;
+  const amount = formatSessionAmountWithAsset(args.session, args.amount);
+  const prompt = formatFlexTopupPrompt(args.session.id, amount);
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -301,6 +310,19 @@ async function promptForFlexConfirmation(args: {
   } finally {
     readline.close();
   }
+}
+
+function formatFlexTopupPrompt(sessionId: string, amount: string): string {
+  if (!isBrandOutputEnabled(process.stderr)) {
+    return `Top up Flex session ${sessionId} by ${amount}? ${formatPromptChoice(process.stderr)} `;
+  }
+
+  return [
+    formatSectionTitle("Top up Flex session", process.stderr),
+    formatKeyValue("Session", sessionId, process.stderr),
+    formatKeyValue("Amount", amount, process.stderr),
+    `Continue? ${formatPromptChoice(process.stderr)} `,
+  ].join("\n");
 }
 
 async function promptForFlexSessionId(
@@ -429,7 +451,8 @@ const flexTopup = command({
       config: resolved,
       session,
       amount: parsedAmount,
-      note: (message) => process.stderr.write(`${message}\n`),
+      note: (message) =>
+        process.stderr.write(`${formatProgressNote(message)}\n`),
     });
     printTopupResult(format, {
       session: result.session,

@@ -6,6 +6,7 @@ import {
   type OutputFormat,
   writeLine,
 } from "../output/format.js";
+import { formatStatus } from "../output/brand.js";
 import {
   ConfigError,
   type ConfigUpdateInput,
@@ -65,7 +66,7 @@ function printConfigMutationResult(
   }
 
   if (summary != null) {
-    writeLine(summary);
+    writeLine(formatStatus(summary, "success"));
   }
   if (rows.length > 0) {
     printTable(["Field", "Value"], rows);

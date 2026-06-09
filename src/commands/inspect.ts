@@ -12,6 +12,7 @@ import {
   printYaml,
   writeLine,
 } from "../output/format.js";
+import { formatKeyValue, formatSectionTitle } from "../output/brand.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 
 export const inspect = command({
@@ -53,12 +54,12 @@ export const inspect = command({
     }
 
     const p = proxy.data;
-    writeLine(`${p.name} (ID: ${p.id})`);
-    writeLine(`  URL:       ${p.url}`);
-    writeLine(`  Price:     ${formatPrice(p.default_price)}`);
-    writeLine(`  Scheme:    ${p.default_scheme}`);
-    writeLine(`  Tags:      ${p.tags.join(", ")}`);
-    writeLine(`  Endpoints: ${p.endpoint_count}`);
+    writeLine(formatSectionTitle(`${p.name} (ID: ${p.id})`));
+    writeLine(formatKeyValue("URL", p.url));
+    writeLine(formatKeyValue("Price", formatPrice(p.default_price)));
+    writeLine(formatKeyValue("Scheme", p.default_scheme));
+    writeLine(formatKeyValue("Tags", p.tags.join(", ")));
+    writeLine(formatKeyValue("Endpoints", String(p.endpoint_count)));
     writeLine("");
 
     if (endpoints.length > 0) {
