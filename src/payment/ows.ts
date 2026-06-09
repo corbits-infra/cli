@@ -5,7 +5,6 @@ import {
   type AccountInfo,
   type WalletInfo,
 } from "@open-wallet-standard/core";
-import { Connection } from "@solana/web3.js";
 import {
   address,
   getBase64EncodedWireTransaction,
@@ -219,7 +218,6 @@ export type OwsDeps = {
   getWallet: typeof getWallet;
   signTransaction: typeof owsSignTransaction;
   signTypedData: typeof owsSignTypedData;
-  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -364,7 +362,6 @@ export const buildOwsPaymentHandler = createBuildOwsPaymentHandler({
   getWallet,
   signTransaction: owsSignTransaction,
   signTypedData: owsSignTypedData,
-  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,

@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+import { address as solanaAddress } from "@solana/kit";
 import { isAddress } from "viem";
 import { normalizeNetworkId } from "@faremeter/info";
 import {
@@ -137,7 +137,7 @@ function resolveKnownSolanaAsset(
 ): KnownPaymentAssetDetails {
   const cluster = getSolanaClusterForNetwork(network);
   try {
-    new PublicKey(input);
+    solanaAddress(input);
     for (const symbol of KNOWN_SOLANA_TOKENS) {
       const token = lookupKnownSPLToken(cluster, symbol);
       if (token?.address === input) {

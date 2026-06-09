@@ -7,8 +7,8 @@ import {
   V2_PAYMENT_HEADER,
   V2_PAYMENT_REQUIRED_HEADER,
 } from "@faremeter/types/x402v2";
-import { Keypair } from "@solana/web3.js";
 import {
+  address,
   compileTransaction,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
@@ -30,6 +30,16 @@ import {
   extractPaymentResponseTransaction,
 } from "../src/payment/signer.js";
 import { createBuildOwsPaymentHandler } from "../src/payment/ows.js";
+
+const TEST_SOLANA_SECRET_KEY = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+  23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 121, 181, 86, 46, 143, 230, 84, 249,
+  64, 120, 177, 18, 232, 169, 139, 167, 144, 31, 133, 58, 230, 149, 190, 215,
+  224, 227, 145, 11, 173, 4, 150, 100,
+] as const;
+const TEST_SOLANA_ADDRESS = address(
+  "9C6hybhQ6Aycep9jaUnP6uL9ZYvDjUp1aSkFWPUFJtpj",
+);
 
 function createSolanaKeypairConfig() {
   return {
@@ -1144,35 +1154,36 @@ await t.test("payment signer", async (t) => {
   });
 
   await t.test("uses the expanded Solana keypair path", async (t) => {
-    const keypair = Keypair.generate();
+    const secretKey = Uint8Array.from(TEST_SOLANA_SECRET_KEY);
     let readPath: string | undefined;
     let seenWalletArgs:
       | {
           network: string;
-          publicKey: string;
+          secretKey: number[];
         }
       | undefined;
+    let seenMint: unknown;
     let seenPaymentHandlerOptions: unknown;
 
     const buildPaymentHandler = createBuildPaymentHandler({
       readTextFile: async (filePath) => {
         readPath = filePath;
-        return JSON.stringify(Array.from(keypair.secretKey));
+        return JSON.stringify(Array.from(secretKey));
       },
       buildOwsPaymentHandler: async () => {
         throw new Error("should not build OWS handler");
       },
       createSolanaLocalWallet: (async (
         network: string,
-        loadedKeypair: Keypair,
+        secretKey: Uint8Array,
       ) => {
         seenWalletArgs = {
           network,
-          publicKey: loadedKeypair.publicKey.toBase58(),
+          secretKey: Array.from(secretKey),
         };
         return {
           network,
-          publicKey: loadedKeypair.publicKey,
+          publicKey: TEST_SOLANA_ADDRESS,
           partiallySignTransaction: async (tx: unknown) => tx,
           updateTransaction: async (tx: unknown) => tx,
         } as never;
@@ -1180,14 +1191,19 @@ await t.test("payment signer", async (t) => {
       createEvmLocalWallet: async () => {
         throw new Error("should not build an EVM wallet");
       },
-      createSolanaPaymentHandler: ((...args: unknown[]) => {
-        seenPaymentHandlerOptions = args[3];
+      createSolanaPaymentHandler: ((
+        _wallet: unknown,
+        mint: unknown,
+        _rpcURL: unknown,
+        options: unknown,
+      ) => {
+        seenMint = mint;
+        seenPaymentHandlerOptions = options;
         return (async () => []) as never;
       }) as never,
       createEvmPaymentHandler: (() => {
         throw new Error("should not build an EVM payment handler");
       }) as never,
-      createConnection: (() => ({})) as never,
       lookupKnownSPLToken: (() => ({
         address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
         name: "USDC",
@@ -1204,8 +1220,9 @@ await t.test("payment signer", async (t) => {
     t.equal(readPath, "/tmp/id.json");
     t.same(seenWalletArgs, {
       network: "devnet",
-      publicKey: keypair.publicKey.toBase58(),
+      secretKey: Array.from(secretKey),
     });
+    t.equal(seenMint, "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
     t.equal(seenPaymentHandlerOptions, undefined);
     t.equal(built.network, "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
   });
@@ -1252,9 +1269,6 @@ await t.test("payment signer", async (t) => {
           throw new Error("should not build a Solana payment handler");
         }) as never,
         createEvmPaymentHandler: (() => (async () => []) as never) as never,
-        createConnection: (() => {
-          throw new Error("should not create a Solana connection");
-        }) as never,
         lookupKnownSPLToken: (() => undefined) as never,
         clusterToCAIP2: (() => ({ caip2: "" })) as never,
         lookupKnownAsset: (() => ({
@@ -1311,7 +1325,6 @@ await t.test("OWS payment handlers", async (t) => {
         signTypedData: (() => {
           throw new Error("should not sign typed data for Solana");
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => ({
           address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
           name: "USDC",
@@ -1411,7 +1424,6 @@ await t.test("OWS payment handlers", async (t) => {
         signTypedData: (() => {
           throw new Error("should not sign typed data for Solana");
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => ({
           address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
           name: "USDC",
@@ -1464,7 +1476,6 @@ await t.test("OWS payment handlers", async (t) => {
         signTypedData: (() => {
           throw new Error("should not sign typed data for Solana");
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => ({
           address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
           name: "USDC",
@@ -1544,7 +1555,6 @@ await t.test("OWS payment handlers", async (t) => {
           signTypedDataArgs = args;
           return { signature: "abc123" };
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => undefined) as never,
         clusterToCAIP2: (() => ({ caip2: "" })) as never,
         lookupKnownAsset: (() => ({
@@ -1607,7 +1617,6 @@ await t.test("OWS payment handlers", async (t) => {
         signTypedData: (() => {
           throw new Error("should not sign typed data for Solana");
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => undefined) as never,
         clusterToCAIP2: (() => ({ caip2: "" })) as never,
         lookupKnownAsset: (() => undefined) as never,
@@ -1651,7 +1660,6 @@ await t.test("OWS payment handlers", async (t) => {
         signTypedData: (() => {
           throw new Error("should not sign for mismatched EVM wallets");
         }) as never,
-        createConnection: (() => ({})) as never,
         lookupKnownSPLToken: (() => undefined) as never,
         clusterToCAIP2: (() => ({ caip2: "" })) as never,
         lookupKnownAsset: (() => undefined) as never,
