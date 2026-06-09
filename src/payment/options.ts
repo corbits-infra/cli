@@ -8,6 +8,7 @@ import {
   writeLine,
   type OutputFormat,
 } from "../output/format.js";
+import { formatKeyValue } from "../output/brand.js";
 import {
   formatPaymentOptionNetwork,
   getPaymentRequirementDetails,
@@ -174,9 +175,9 @@ export function printPaymentRequirementInspection(
     return;
   }
 
-  writeLine(`x402 Version: ${inspection.version}`);
+  writeLine(formatKeyValue("x402 Version", String(inspection.version)));
   if (inspection.resource != null) {
-    writeLine(`Resource: ${inspection.resource.url}`);
+    writeLine(formatKeyValue("Resource", inspection.resource.url));
   }
   writeLine("");
   printTable(

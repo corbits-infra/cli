@@ -15,6 +15,7 @@ import {
   type OutputFormat,
   writeLine,
 } from "../output/format.js";
+import { formatSectionTitle, formatStatus } from "../output/brand.js";
 
 type HistoryCommandDeps = {
   listHistoryEntries: typeof listHistoryEntries;
@@ -175,7 +176,7 @@ function printHistoryList(format: OutputFormat, entries: HistoryEntry[]): void {
   }
 
   if (entries.length === 0) {
-    writeLine("No history entries found.");
+    writeLine(formatStatus("No history entries found."));
     return;
   }
 
@@ -262,12 +263,12 @@ function printHistoryDetail(format: OutputFormat, entry: HistoryEntry): void {
 
   writeLine("");
   if (decodedResponse?.text != null) {
-    writeLine("Response:");
+    writeLine(formatSectionTitle("Response:"));
     writeResponseText(decodedResponse.text);
     return;
   }
 
-  writeLine("Response (base64):");
+  writeLine(formatSectionTitle("Response (base64):"));
   writeLine(decodedResponse?.base64 ?? "");
 }
 

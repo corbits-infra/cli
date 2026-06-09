@@ -21,6 +21,15 @@ import {
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
+  brandStrong,
+  formatKeyValue,
+  formatProgressNote,
+  formatPromptChoice,
+  formatSectionTitle,
+  formatStatus,
+  isBrandOutputEnabled,
+} from "../output/brand.js";
+import {
   formatCompactDisplayTokenAmount,
   formatJSON,
   formatDisplayTokenAmount,
@@ -310,7 +319,7 @@ function canPromptForConfirmation(): boolean {
 async function promptForPaymentConfirmation(
   args: ConfirmPaymentArgs,
 ): Promise<boolean> {
-  const prompt = `This call will pay $${args.amountUsd} USD (${args.assetAmount} ${args.assetDisplay} on ${args.networkDisplay}), which exceeds spending.confirmAboveUsd=$${args.thresholdUsd}. Continue? [y/N] `;
+  const prompt = formatPaymentConfirmationPrompt(args);
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -324,6 +333,25 @@ async function promptForPaymentConfirmation(
   }
 }
 
+function formatPaymentConfirmationPrompt(args: ConfirmPaymentArgs): string {
+  if (!isBrandOutputEnabled(process.stderr)) {
+    return `This call will pay $${args.amountUsd} USD (${args.assetAmount} ${args.assetDisplay} on ${args.networkDisplay}), which exceeds spending.confirmAboveUsd=$${args.thresholdUsd}. Continue? ${formatPromptChoice(process.stderr)} `;
+  }
+
+  return [
+    formatSectionTitle("Payment approval", process.stderr),
+    formatKeyValue("USD amount", `$${args.amountUsd}`, process.stderr),
+    formatKeyValue(
+      "Asset amount",
+      `${args.assetAmount} ${args.assetDisplay}`,
+      process.stderr,
+    ),
+    formatKeyValue("Network", args.networkDisplay, process.stderr),
+    formatKeyValue("Confirm above", `$${args.thresholdUsd}`, process.stderr),
+    `Continue? ${formatPromptChoice(process.stderr)} `,
+  ].join("\n");
+}
+
 function formatPaymentSummary(args: {
   paymentInfo: PaymentDisplayMetadata;
   responseStatus?: ResponseStatusMetadata;
@@ -335,6 +363,48 @@ function formatPaymentSummary(args: {
     asset: assetDisplay,
     ...(paymentInfo.decimals == null ? {} : { decimals: paymentInfo.decimals }),
   });
+
+  if (isBrandOutputEnabled(process.stderr)) {
+    return [
+      formatSectionTitle("Payment complete", process.stderr),
+      formatKeyValue(
+        "Amount",
+        brandStrong(`${amount} ${assetDisplay}`, process.stderr),
+        process.stderr,
+      ),
+      formatKeyValue("Network", paymentInfo.network, process.stderr),
+      ...(paymentInfo.txSignature == null
+        ? []
+        : [formatKeyValue("Tx", paymentInfo.txSignature, process.stderr)]),
+      ...(paymentInfo.flexSessionId == null
+        ? []
+        : [
+            formatKeyValue(
+              "Flex session",
+              paymentInfo.flexSessionId,
+              process.stderr,
+            ),
+          ]),
+      ...(responseStatus == null
+        ? []
+        : [
+            formatKeyValue(
+              "Response",
+              formatStatus(
+                formatResponseStatus(responseStatus.status),
+                responseStatus.status != null &&
+                  responseStatus.status >= 200 &&
+                  responseStatus.status < 300
+                  ? "success"
+                  : "danger",
+                process.stderr,
+              ),
+              process.stderr,
+            ),
+          ]),
+    ].join("\n");
+  }
+
   const parts = [
     `Payment: ${amount} ${assetDisplay} on ${paymentInfo.network}`,
   ];
@@ -583,10 +653,7 @@ async function promptForFlexConfirmation(
       ? {}
       : { decimals: args.requirement.decimals }),
   })} ${asset}`;
-  const prompt =
-    args.kind === "create"
-      ? `Create a reusable Flex session and deposit ${amount}? [y/N] `
-      : `Top up Flex session ${args.session.id} by ${amount}? [y/N] `;
+  const prompt = formatFlexConfirmationPrompt(args, amount);
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -598,6 +665,28 @@ async function promptForFlexConfirmation(
   } finally {
     readline.close();
   }
+}
+
+function formatFlexConfirmationPrompt(
+  args: FlexConfirmArgs,
+  amount: string,
+): string {
+  if (!isBrandOutputEnabled(process.stderr)) {
+    return args.kind === "create"
+      ? `Create a reusable Flex session and deposit ${amount}? ${formatPromptChoice(process.stderr)} `
+      : `Top up Flex session ${args.session.id} by ${amount}? ${formatPromptChoice(process.stderr)} `;
+  }
+
+  const heading =
+    args.kind === "create" ? "Create Flex session" : "Top up Flex session";
+  return [
+    formatSectionTitle(heading, process.stderr),
+    ...(args.kind === "topup"
+      ? [formatKeyValue("Session", args.session.id, process.stderr)]
+      : []),
+    formatKeyValue("Amount", amount, process.stderr),
+    `Continue? ${formatPromptChoice(process.stderr)} `,
+  ].join("\n");
 }
 
 type PaidRetryContext = {
@@ -817,7 +906,8 @@ function prepareFlexPaidRetry(args: {
         ...(args.flexSession == null ? {} : { sessionId: args.flexSession }),
         allowCreateOrTopup: args.allowCreateOrTopup,
         ...(args.confirm == null ? {} : { confirm: args.confirm }),
-        note: (message) => process.stderr.write(`${message}\n`),
+        note: (message) =>
+          process.stderr.write(`${formatProgressNote(message)}\n`),
       });
       return payment;
     },
