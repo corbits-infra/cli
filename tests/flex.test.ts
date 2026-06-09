@@ -10,9 +10,10 @@ import {
   V2_PAYMENT_HEADER,
   V2_PAYMENT_REQUIRED_HEADER,
 } from "@faremeter/types/x402v2";
-import { Keypair } from "@solana/web3.js";
 import {
   address,
+  createKeyPairSignerFromBytes,
+  generateKeyPairSigner,
   type Address,
   type Instruction,
   type Signature,
@@ -73,6 +74,13 @@ const resolvedConfig = {
     expandedPath: "/tmp/solana-id.json",
   },
 } as const;
+
+const TEST_OWNER_SECRET_KEY = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+  23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 121, 181, 86, 46, 143, 230, 84, 249,
+  64, 120, 177, 18, 232, 169, 139, 167, 144, 31, 133, 58, 230, 149, 190, 215,
+  224, 227, 145, 11, 173, 4, 150, 100,
+] as const;
 
 const flexRequirement = {
   scheme: "flex",
@@ -145,8 +153,8 @@ function decodeHeaderPayload(header: { value: string }): unknown {
   return JSON.parse(Buffer.from(header.value, "base64").toString("utf8"));
 }
 
-function randomAddress(): Address {
-  return address(Keypair.generate().publicKey.toBase58());
+async function randomAddress(): Promise<Address> {
+  return (await generateKeyPairSigner()).address;
 }
 
 function testInstruction(
@@ -369,15 +377,16 @@ await t.test(
   async (t) => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "corbits-flex-"));
     const storePath = path.join(tempDir, "flex-sessions.json");
-    const ownerKeypair = Keypair.generate();
-    const escrowAddress = randomAddress();
-    const facilitatorAddress = randomAddress();
-    const sessionKeyAccount = randomAddress();
-    const sessionKeyAddress = randomAddress();
-    const sourceTokenAccount = randomAddress();
+    const ownerSecretKey = Uint8Array.from(TEST_OWNER_SECRET_KEY);
+    const ownerSigner = await createKeyPairSignerFromBytes(ownerSecretKey);
+    const escrowAddress = await randomAddress();
+    const facilitatorAddress = await randomAddress();
+    const sessionKeyAccount = await randomAddress();
+    const sessionKeyAddress = await randomAddress();
+    const sourceTokenAccount = await randomAddress();
     const sends: string[] = [];
     const deps: Partial<FlexSolanaDeps> = {
-      readTextFile: async () => JSON.stringify([...ownerKeypair.secretKey]),
+      readTextFile: async () => JSON.stringify([...ownerSecretKey]),
       createRpc: (() =>
         ({
           getTokenAccountsByOwner: () => ({
@@ -390,7 +399,7 @@ await t.test(
         >) as FlexSolanaDeps["createRpc"],
       getCreateEscrowInstructionAsync: (async () =>
         testInstruction("create", [
-          { address: randomAddress() },
+          { address: await randomAddress() },
           { address: escrowAddress },
         ])) as unknown as FlexSolanaDeps["getCreateEscrowInstructionAsync"],
       getDepositInstructionAsync: (async () =>
@@ -399,8 +408,8 @@ await t.test(
         )) as unknown as FlexSolanaDeps["getDepositInstructionAsync"],
       getRegisterSessionKeyInstructionAsync: (async () =>
         testInstruction("register", [
-          { address: randomAddress() },
-          { address: randomAddress() },
+          { address: await randomAddress() },
+          { address: await randomAddress() },
           { address: sessionKeyAccount },
         ])) as unknown as FlexSolanaDeps["getRegisterSessionKeyInstructionAsync"],
       generateFlexSessionKeyPair: async () =>
@@ -431,7 +440,7 @@ await t.test(
           ...resolvedConfig,
           activeWallet: {
             ...resolvedConfig.activeWallet,
-            address: ownerKeypair.publicKey.toBase58(),
+            address: ownerSigner.address,
             expandedPath: "/tmp/flex-owner.json",
           },
         },

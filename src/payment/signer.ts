@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { address, type Address } from "@solana/kit";
 import { normalizeNetworkId, translateNetworkToLegacy } from "@faremeter/info";
 import {
   isKnownAsset,
@@ -68,7 +68,7 @@ export type PaymentRetryHeaderResult = {
 
 type SolanaPaymentInfo = {
   cluster: "mainnet-beta" | "devnet";
-  mint: PublicKey;
+  mint: Address;
   network: string;
   asset: string;
 };
@@ -90,7 +90,6 @@ type BuildPaymentHandlerDeps = {
   createEvmLocalWallet: typeof createEvmLocalWallet;
   createSolanaPaymentHandler: typeof solanaExact.createPaymentHandler;
   createEvmPaymentHandler: typeof evmExact.createPaymentHandler;
-  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -164,7 +163,7 @@ function resolveSolanaPaymentInfo(
 
   return {
     cluster,
-    mint: new PublicKey(asset),
+    mint: address(asset),
     network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
     asset,
   };
@@ -257,10 +256,10 @@ async function buildSolanaKeypairHandler(
 
   const paymentInfo = resolveSolanaPaymentInfo(config, requirement, deps);
   const secretKeyText = await readActiveWalletSecret(config, deps);
-  const keypair = Keypair.fromSecretKey(parseSolanaSecretKey(secretKeyText));
+  const secretKey = parseSolanaSecretKey(secretKeyText);
   const wallet = await deps.createSolanaLocalWallet(
     paymentInfo.cluster,
-    keypair,
+    secretKey,
   );
 
   return {
@@ -879,7 +878,6 @@ export const buildPaymentHandler = createBuildPaymentHandler({
   createEvmLocalWallet,
   createSolanaPaymentHandler: solanaExact.createPaymentHandler,
   createEvmPaymentHandler: evmExact.createPaymentHandler,
-  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,
