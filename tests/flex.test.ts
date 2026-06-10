@@ -52,6 +52,18 @@ import {
   captureStdout,
 } from "./test-helpers.js";
 
+type CallCommandDeps = Parameters<typeof createCallCommand>[0];
+
+function createTestCallCommand(
+  deps: Omit<CallCommandDeps, "appendHistoryRecord"> &
+    Partial<Pick<CallCommandDeps, "appendHistoryRecord">>,
+) {
+  return createCallCommand({
+    appendHistoryRecord: async () => void 0,
+    ...deps,
+  });
+}
+
 const resolvedConfig = {
   version: 1,
   preferences: {
@@ -740,7 +752,7 @@ await t.test("uses --yes for non-interactive Flex authorization", async (t) => {
     process.exitCode = priorExitCode;
   });
 
-  const call = createCallCommand({
+  const call = createTestCallCommand({
     loadRequiredConfig: async () => ({
       path: "/tmp/config.toml",
       config: {
@@ -804,7 +816,7 @@ await t.test(
       process.exitCode = priorExitCode;
     });
 
-    const call = createCallCommand({
+    const call = createTestCallCommand({
       loadRequiredConfig: async () => ({
         path: "/tmp/config.toml",
         config: {
@@ -892,7 +904,7 @@ await t.test(
       process.exitCode = priorExitCode;
     });
 
-    const call = createCallCommand({
+    const call = createTestCallCommand({
       loadRequiredConfig: async () => ({
         path: "/tmp/config.toml",
         config: {

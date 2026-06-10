@@ -22,6 +22,18 @@ import {
   captureStdoutBytes,
 } from "./test-helpers.js";
 
+type CallCommandDeps = Parameters<typeof createCallCommand>[0];
+
+function createTestCallCommand(
+  deps: Omit<CallCommandDeps, "appendHistoryRecord"> &
+    Partial<Pick<CallCommandDeps, "appendHistoryRecord">>,
+) {
+  return createCallCommand({
+    appendHistoryRecord: async () => void 0,
+    ...deps,
+  });
+}
+
 const resolvedConfig = {
   version: 1,
   preferences: {
@@ -1594,7 +1606,7 @@ await t.test("call command", async (t) => {
     "prints parsed requirements from a body-based x402 challenge without paying",
     async (t) => {
       let buildPaymentRetryHeaderCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -1657,7 +1669,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints parsed requirements from a header-based x402 challenge in json",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -1738,7 +1750,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints parsed requirements from a v1 header-based x402 challenge in json",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -1818,7 +1830,7 @@ await t.test("call command", async (t) => {
     "accepts -f yaml after wrapped args in inspect mode",
     async (t) => {
       const calls: string[][] = [];
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -1880,7 +1892,7 @@ await t.test("call command", async (t) => {
     "accepts --format=json after wrapped args in inspect mode",
     async (t) => {
       const calls: string[][] = [];
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -1962,7 +1974,7 @@ await t.test("call command", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -2003,7 +2015,7 @@ await t.test("call command", async (t) => {
       process.exitCode = priorExitCode;
     });
 
-    const call = createCallCommand({
+    const call = createTestCallCommand({
       loadRequiredConfig: async () => {
         throw new Error("should not load required config");
       },
@@ -2038,7 +2050,7 @@ await t.test("call command", async (t) => {
     async (t) => {
       let preflightAsset: string | undefined;
       let retryAsset: string | undefined;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           const loaded = createLoadedConfig();
           return {
@@ -2125,7 +2137,7 @@ await t.test("call command", async (t) => {
       let exactRetryRequirement: unknown;
       let exactRetryCalls = 0;
       let flexRetryCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async (args) => {
           exactRetryRequirement = args.requirement;
@@ -2200,7 +2212,7 @@ await t.test("call command", async (t) => {
     async (t) => {
       let exactRetryCalls = 0;
       let flexRetryCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           exactRetryCalls += 1;
@@ -2272,7 +2284,7 @@ await t.test("call command", async (t) => {
 
       let exactRetryCalls = 0;
       let flexRetryCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           exactRetryCalls += 1;
@@ -2330,7 +2342,7 @@ await t.test("call command", async (t) => {
           }
         | undefined;
       let buildPaymentRetryHeaderCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () =>
           createLoadedConfig({ confirmAboveUsd: "0.001" }),
         canPromptForConfirmation: () => true,
@@ -2431,7 +2443,7 @@ await t.test("call command", async (t) => {
 
       let buildPaymentRetryHeaderCalls = 0;
       let confirmCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () =>
           createLoadedConfig({ confirmAboveUsd: "0.001" }),
         canPromptForConfirmation: () => false,
@@ -2508,7 +2520,7 @@ await t.test("call command", async (t) => {
     async (t) => {
       let confirmCalls = 0;
       let buildPaymentRetryHeaderCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () =>
           createLoadedConfig({ confirmAboveUsd: "0.001" }),
         canPromptForConfirmation: () => false,
@@ -2597,7 +2609,7 @@ await t.test("call command", async (t) => {
     async (t) => {
       let confirmCalls = 0;
       let buildPaymentRetryHeaderCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () =>
           createLoadedConfig({ confirmAboveUsd: "0.001" }),
         canPromptForConfirmation: () => true,
@@ -2695,7 +2707,7 @@ await t.test("call command", async (t) => {
 
       let buildPaymentRetryHeaderCalls = 0;
       let checkPreflightCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           buildPaymentRetryHeaderCalls += 1;
@@ -2754,7 +2766,7 @@ await t.test("call command", async (t) => {
 
       let buildPaymentRetryHeaderCalls = 0;
       let checkPreflightCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           buildPaymentRetryHeaderCalls += 1;
@@ -2813,7 +2825,7 @@ await t.test("call command", async (t) => {
 
       let buildPaymentRetryHeaderCalls = 0;
       let checkPreflightCalls = 0;
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           buildPaymentRetryHeaderCalls += 1;
@@ -2873,7 +2885,7 @@ await t.test("call command", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => {
           throw new Error("should not load required config");
         },
@@ -2927,7 +2939,7 @@ await t.test("call command", async (t) => {
     "retries 402 requests with generated payment header",
     async (t) => {
       const invocations: unknown[] = [];
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -2991,7 +3003,7 @@ await t.test("call command", async (t) => {
     "retries V2 402 requests with generated payment signature header",
     async (t) => {
       const invocations: unknown[] = [];
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 2,
@@ -3058,7 +3070,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints payment metadata to stderr only when payment-info is enabled",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3126,7 +3138,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints JSON payment metadata to stderr when payment-info format is json",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3218,7 +3230,7 @@ await t.test("call command", async (t) => {
         process.env.NO_DNA = previousNoDna;
       });
 
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3283,7 +3295,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints YAML payment metadata to stderr when payment-info format is yaml",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3343,7 +3355,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints payment metadata on the next line after stderr without a trailing newline",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3403,7 +3415,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints payment metadata on the next line after streamed stdout without a trailing newline",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3462,7 +3474,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "omits tx signature when the paid response does not include one",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3522,7 +3534,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "prints payment metadata and HTTP error status when the paid retry returns an HTTP error",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3583,7 +3595,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "does not print payment metadata when payment-info is disabled",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -3641,7 +3653,7 @@ await t.test("call command", async (t) => {
   await t.test(
     "writes completed stdout bytes without text conversion",
     async (t) => {
-      const call = createCallCommand({
+      const call = createTestCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           throw new Error("should not build payment header");
@@ -3681,7 +3693,7 @@ await t.test("call command", async (t) => {
       process.exitCode = priorExitCode;
     });
 
-    const call = createCallCommand({
+    const call = createTestCallCommand({
       loadRequiredConfig: async () => createLoadedConfig(),
       buildPaymentRetryHeader: async () => ({
         detectedVersion: 1,
@@ -3725,7 +3737,7 @@ await t.test("call command", async (t) => {
       process.exitCode = priorExitCode;
     });
 
-    const call = createCallCommand({
+    const call = createTestCallCommand({
       loadRequiredConfig: async () => createLoadedConfig(),
       buildPaymentRetryHeader: async () => ({
         detectedVersion: 1,

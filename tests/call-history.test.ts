@@ -5,11 +5,27 @@ import path from "node:path";
 import t from "tap";
 import { V2_PAYMENT_REQUIRED_HEADER } from "@faremeter/types/x402v2";
 import { createCallCommand } from "../src/commands/call.js";
-import { getHistoryPath, readHistoryEntry } from "../src/history/store.js";
+import {
+  appendHistoryRecord,
+  getHistoryPath,
+  readHistoryEntry,
+} from "../src/history/store.js";
 import type { LoadedConfig } from "../src/config/index.js";
 import type { PreflightBalanceDeps } from "../src/payment/balance.js";
 import type { WrappedRunResult } from "../src/process/wrapped-client.js";
 import { captureCombinedOutput, withTempDataHome } from "./test-helpers.js";
+
+type CallCommandDeps = Parameters<typeof createCallCommand>[0];
+
+function createHistoryCallCommand(
+  deps: Omit<CallCommandDeps, "appendHistoryRecord"> &
+    Partial<Pick<CallCommandDeps, "appendHistoryRecord">>,
+) {
+  return createCallCommand({
+    appendHistoryRecord,
+    ...deps,
+  });
+}
 
 const resolvedConfig = {
   version: 1,
@@ -194,7 +210,7 @@ await t.test("call history integration", async (t) => {
       const streamOutputModes: boolean[] = [];
       let allowCreateOrTopup: boolean | undefined;
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => {
           throw new Error("should not use exact payment builder");
@@ -272,7 +288,7 @@ await t.test("call history integration", async (t) => {
       withTempDataHome(t);
       const streamOutputModes: boolean[] = [];
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 2,
@@ -345,7 +361,7 @@ await t.test("call history integration", async (t) => {
       withTempDataHome(t);
       const streamOutputModes: boolean[] = [];
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -415,7 +431,7 @@ await t.test("call history integration", async (t) => {
       withTempDataHome(t);
 
       const binaryResponse = Buffer.from([0x00, 0xff, 0x41, 0x0a]);
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -480,7 +496,7 @@ await t.test("call history integration", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -542,7 +558,7 @@ await t.test("call history integration", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
