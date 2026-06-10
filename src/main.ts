@@ -43,15 +43,40 @@ const { history } = await import("./commands/history.js");
 const { inspect } = await import("./commands/inspect.js");
 const { APIError, ValidationError } = await import("./api/client.js");
 const { ConfigError } = await import("./config/index.js");
+const { formatSectionTitle, formatStatus, printBrandHeader } =
+  await import("./output/brand.js");
+
+function printWelcome(version: string): void {
+  printBrandHeader();
+  process.stdout.write(
+    [
+      formatSectionTitle("Corbits CLI"),
+      formatStatus(
+        "Discover services, configure payments, and call APIs from your terminal",
+      ),
+      `Version: ${version}`,
+      "",
+      "Start with:",
+      "  corbits discover",
+      "  corbits config init --network <name> --solana-address <addr> --solana-path <path>",
+      "  corbits call --inspect -- curl <url>",
+      "",
+      "Run `corbits --help` for all commands.",
+    ].join("\n") + "\n",
+  );
+}
 
 const app = subcommands({
   name: "corbits",
   version: pkg.version,
-  description: "Browse, filter, and test x402-gated services",
+  description:
+    "Discover services, configure payments, and call APIs from your terminal",
   cmds: { discover, inspect, config, call, balance, history, flex },
 });
 
-run(app, process.argv.slice(2)).catch((err: unknown) => {
+const args = process.argv.slice(2);
+
+function handleRunError(err: unknown): void {
   if (err instanceof APIError) {
     process.stderr.write(`API error (${String(err.status)}): ${err.message}\n`);
   } else if (err instanceof ValidationError) {
@@ -68,4 +93,10 @@ run(app, process.argv.slice(2)).catch((err: unknown) => {
     process.stderr.write(`Error: ${message}\n`);
   }
   process.exitCode = 1;
-});
+}
+
+if (args.length === 0) {
+  printWelcome(pkg.version);
+} else {
+  run(app, args).catch(handleRunError);
+}
