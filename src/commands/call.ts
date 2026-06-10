@@ -94,7 +94,7 @@ type CallDeps = {
   buildPaymentRetryHeader: typeof buildPaymentRetryHeader;
   buildFlexPaymentRetryHeader?: typeof buildFlexPaymentRetryHeader;
   runWrappedClient: typeof runWrappedClient;
-  appendHistoryRecord?: typeof appendHistoryRecord;
+  appendHistoryRecord: typeof appendHistoryRecord;
   canPromptForConfirmation?: () => boolean;
   confirmPayment?: (args: ConfirmPaymentArgs) => Promise<boolean>;
   checkPreflightBalance?: (
@@ -729,7 +729,7 @@ async function runPaidRetry<TPaymentInfo>(args: {
   prepared: PreparedPaidRetry<TPaymentInfo>;
 }): Promise<void> {
   const { context, prepared } = args;
-  const persistHistory = args.deps.appendHistoryRecord ?? appendHistoryRecord;
+  const persistHistory = args.deps.appendHistoryRecord;
 
   try {
     await prepared.preflight?.();
@@ -1214,9 +1214,7 @@ export function createCallCommand(deps: CallDeps) {
         await runPaidRetry({
           deps: {
             runWrappedClient: deps.runWrappedClient,
-            ...(deps.appendHistoryRecord == null
-              ? {}
-              : { appendHistoryRecord: deps.appendHistoryRecord }),
+            appendHistoryRecord: deps.appendHistoryRecord,
           },
           context,
           prepared: prepareFlexPaidRetry({
@@ -1239,7 +1237,7 @@ export function createCallCommand(deps: CallDeps) {
       await runPaidRetry({
         deps: {
           runWrappedClient: deps.runWrappedClient,
-          appendHistoryRecord: deps.appendHistoryRecord ?? appendHistoryRecord,
+          appendHistoryRecord: deps.appendHistoryRecord,
         },
         context,
         prepared: prepareExactPaidRetry({
