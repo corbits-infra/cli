@@ -379,11 +379,13 @@ await t.test(
     const storePath = path.join(tempDir, "flex-sessions.json");
     const ownerSecretKey = Uint8Array.from(TEST_OWNER_SECRET_KEY);
     const ownerSigner = await createKeyPairSignerFromBytes(ownerSecretKey);
-    const escrowAddress = await randomAddress();
     const facilitatorAddress = await randomAddress();
-    const sessionKeyAccount = await randomAddress();
     const sessionKeyAddress = await randomAddress();
     const sourceTokenAccount = await randomAddress();
+    const decoyEscrowAccountMeta = await randomAddress();
+    const decoySessionKeyAccountMeta = await randomAddress();
+    let derivedEscrowAddress: Address | undefined;
+    let derivedSessionKeyAccount: Address | undefined;
     const sends: string[] = [];
     const deps: Partial<FlexSolanaDeps> = {
       readTextFile: async () => JSON.stringify([...ownerSecretKey]),
@@ -401,21 +403,35 @@ await t.test(
         input: Parameters<FlexSolanaDeps["getCreateEscrowInstructionAsync"]>[0],
       ) => {
         t.equal(input.index, 1234567890n);
+        t.ok(input.escrow, "create escrow instruction receives derived escrow");
+        derivedEscrowAddress = input.escrow;
         return testInstruction("create", [
           { address: await randomAddress() },
-          { address: escrowAddress },
+          { address: decoyEscrowAccountMeta },
         ]);
       }) as unknown as FlexSolanaDeps["getCreateEscrowInstructionAsync"],
       getDepositInstructionAsync: (async () =>
         testInstruction(
           "deposit",
         )) as unknown as FlexSolanaDeps["getDepositInstructionAsync"],
-      getRegisterSessionKeyInstructionAsync: (async () =>
-        testInstruction("register", [
+      getRegisterSessionKeyInstructionAsync: (async (
+        input: Parameters<
+          FlexSolanaDeps["getRegisterSessionKeyInstructionAsync"]
+        >[0],
+      ) => {
+        t.equal(input.escrow, derivedEscrowAddress);
+        t.equal(input.sessionKey, sessionKeyAddress);
+        t.ok(
+          input.sessionKeyAccount,
+          "register instruction receives derived session key account",
+        );
+        derivedSessionKeyAccount = input.sessionKeyAccount;
+        return testInstruction("register", [
           { address: await randomAddress() },
           { address: await randomAddress() },
-          { address: sessionKeyAccount },
-        ])) as unknown as FlexSolanaDeps["getRegisterSessionKeyInstructionAsync"],
+          { address: decoySessionKeyAccountMeta },
+        ]);
+      }) as unknown as FlexSolanaDeps["getRegisterSessionKeyInstructionAsync"],
       generateFlexSessionKeyPair: async () =>
         webcrypto.subtle.generateKey("Ed25519", true, [
           "sign",
@@ -469,6 +485,10 @@ await t.test(
 
     t.same(sends, ["create", "register", "deposit"]);
     t.equal(result.session.deposited_amount, flexRequirement.amount);
+    t.equal(result.session.escrow, derivedEscrowAddress);
+    t.equal(result.session.session_key_account, derivedSessionKeyAccount);
+    t.not(result.session.escrow, decoyEscrowAccountMeta);
+    t.not(result.session.session_key_account, decoySessionKeyAccountMeta);
     const store = await readFlexSessionStore(storePath);
     t.equal(store.sessions[0]?.deposited_amount, flexRequirement.amount);
   },
