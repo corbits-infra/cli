@@ -139,6 +139,67 @@ function createPaymentRejectedResult(
   };
 }
 
+const SOLANA_DEVNET = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+const SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const USDC_DEVNET = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+const USDC_MAINNET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+function createV2PaymentRequiredResponse(accepts: unknown[]): Response {
+  return new Response("", {
+    status: 402,
+    statusText: "Payment Required",
+    headers: {
+      [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+        JSON.stringify({
+          x402Version: 2,
+          resource: {
+            url: "https://example.com",
+            method: "GET",
+          },
+          accepts,
+        }),
+        "utf8",
+      ).toString("base64"),
+    },
+  });
+}
+
+function createExactDevnetRequirement() {
+  return {
+    scheme: "exact",
+    network: SOLANA_DEVNET,
+    amount: "1000",
+    payTo: "receiver",
+    maxTimeoutSeconds: 60,
+    asset: USDC_DEVNET,
+    extra: { decimals: 6 },
+  };
+}
+
+function createFlexDevnetRequirement() {
+  return {
+    scheme: "flex",
+    network: SOLANA_DEVNET,
+    amount: "1000",
+    payTo: "unused",
+    maxTimeoutSeconds: 60,
+    asset: USDC_DEVNET,
+    extra: {
+      facilitator: "Facilitator111111111111111111111111111111",
+      minGracePeriodSlots: "12",
+      decimals: 6,
+    },
+  };
+}
+
+function createFlexMainnetRequirement() {
+  return {
+    ...createFlexDevnetRequirement(),
+    network: SOLANA_MAINNET,
+    asset: USDC_MAINNET,
+  };
+}
+
 function createSpawnStub(
   args: {
     stdout?: Buffer | string;
@@ -1978,7 +2039,20 @@ await t.test("call command", async (t) => {
       let preflightAsset: string | undefined;
       let retryAsset: string | undefined;
       const call = createCallCommand({
-        loadRequiredConfig: async () => createLoadedConfig(),
+        loadRequiredConfig: async () => {
+          const loaded = createLoadedConfig();
+          return {
+            ...loaded,
+            resolved: {
+              ...loaded.resolved,
+              payment: {
+                ...loaded.resolved.payment,
+                network: "mainnet-beta",
+                rpcURL: "https://api.mainnet-beta.solana.com",
+              },
+            },
+          };
+        },
         buildPaymentRetryHeader: async ({ config }) => {
           retryAsset = config.payment.asset;
           return {
@@ -2041,6 +2115,205 @@ await t.test("call command", async (t) => {
 
       t.equal(preflightAsset, "USDT");
       t.equal(retryAsset, "USDT");
+    },
+  );
+
+  await t.test(
+    "selects exact when it is the only selectable mixed-challenge candidate",
+    async (t) => {
+      const invocations: unknown[] = [];
+      let exactRetryRequirement: unknown;
+      let exactRetryCalls = 0;
+      let flexRetryCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async (args) => {
+          exactRetryRequirement = args.requirement;
+          exactRetryCalls += 1;
+          return {
+            detectedVersion: 2,
+            header: { name: "PAYMENT-SIGNATURE", value: "exact-paid" },
+            paymentInfo: {
+              amount: "1000",
+              asset: USDC_DEVNET,
+              assetSymbol: "USDC",
+              network: SOLANA_DEVNET,
+              decimals: 6,
+            },
+          };
+        },
+        buildFlexPaymentRetryHeader: async () => {
+          flexRetryCalls += 1;
+          throw new Error("should not build Flex payment header");
+        },
+        runWrappedClient: async (args) => {
+          invocations.push(args);
+          if (args.extraHeader == null) {
+            return createPaymentRequiredResult({
+              tool: "curl",
+              url: "https://example.com",
+              requestInit: { method: "GET" },
+              response: createV2PaymentRequiredResponse([
+                createFlexMainnetRequirement(),
+                createExactDevnetRequirement(),
+              ]),
+            });
+          }
+
+          return createCompletedResult({
+            exitCode: 0,
+            stdout: "paid",
+            stderr: "",
+          });
+        },
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: false,
+        yes: false,
+        flexSession: undefined,
+        asset: undefined,
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(flexRetryCalls, 0);
+      t.equal(exactRetryCalls, 1);
+      t.match(exactRetryRequirement, {
+        scheme: "exact",
+        network: SOLANA_DEVNET,
+        asset: USDC_DEVNET,
+      });
+      t.match(invocations[1], {
+        extraHeader: { name: "PAYMENT-SIGNATURE", value: "exact-paid" },
+      });
+    },
+  );
+
+  await t.test(
+    "selects Flex when both Flex and exact are selectable",
+    async (t) => {
+      let exactRetryCalls = 0;
+      let flexRetryCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          exactRetryCalls += 1;
+          throw new Error("should not build exact payment header");
+        },
+        buildFlexPaymentRetryHeader: async () => {
+          flexRetryCalls += 1;
+          return {
+            detectedVersion: 2,
+            header: { name: "PAYMENT-SIGNATURE", value: "flex-paid" },
+            paymentInfo: {
+              amount: "1000",
+              asset: USDC_DEVNET,
+              assetSymbol: "USDC",
+              network: SOLANA_DEVNET,
+              decimals: 6,
+              sessionId: "flex-session-1",
+              escrow: "Escrow1111111111111111111111111111111111",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createPaymentRequiredResult({
+                tool: "curl",
+                url: "https://example.com",
+                requestInit: { method: "GET" },
+                response: createV2PaymentRequiredResponse([
+                  createFlexDevnetRequirement(),
+                  createExactDevnetRequirement(),
+                ]),
+              })
+            : createCompletedResult({
+                exitCode: 0,
+                stdout: "paid",
+                stderr: "",
+              }),
+        checkPreflightBalance: async () => {
+          throw new Error("Flex retry should not run exact preflight");
+        },
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      await call.handler({
+        inspect: false,
+        paymentInfo: false,
+        saveResponse: false,
+        yes: true,
+        flexSession: undefined,
+        asset: undefined,
+        format: undefined,
+        tool: "curl",
+        args: ["https://example.com"],
+      });
+
+      t.equal(flexRetryCalls, 1);
+      t.equal(exactRetryCalls, 0);
+    },
+  );
+
+  await t.test(
+    "honors --flex-session by requiring a selectable Flex candidate",
+    async (t) => {
+      const priorExitCode = process.exitCode;
+      process.exitCode = undefined;
+      t.teardown(() => {
+        process.exitCode = priorExitCode;
+      });
+
+      let exactRetryCalls = 0;
+      let flexRetryCalls = 0;
+      const call = createCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          exactRetryCalls += 1;
+          throw new Error("should not build exact payment header");
+        },
+        buildFlexPaymentRetryHeader: async () => {
+          flexRetryCalls += 1;
+          throw new Error("should not build Flex payment header");
+        },
+        runWrappedClient: async () =>
+          createPaymentRequiredResult({
+            tool: "curl",
+            url: "https://example.com",
+            requestInit: { method: "GET" },
+            response: createV2PaymentRequiredResponse([
+              createFlexMainnetRequirement(),
+              createExactDevnetRequirement(),
+            ]),
+          }),
+        checkPreflightBalance: async () => void 0,
+        preflightBalanceDeps: {} as PreflightBalanceDeps,
+      });
+
+      const stderr = await captureStderr(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: false,
+          yes: false,
+          flexSession: "flex-session-1",
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["https://example.com"],
+        });
+      });
+
+      t.match(stderr, /offered networks: solana-mainnet-beta/);
+      t.equal(flexRetryCalls, 0);
+      t.equal(exactRetryCalls, 0);
+      t.equal(process.exitCode, 1);
     },
   );
 
@@ -2679,18 +2952,9 @@ await t.test("call command", async (t) => {
                 method: "POST",
                 body: '{"x":1}',
               },
-              response: new Response(
-                JSON.stringify({
-                  x402Version: 1,
-                  accepts: [],
-                }),
-                {
-                  status: 402,
-                  headers: {
-                    "content-type": "application/json",
-                  },
-                },
-              ),
+              response: createV2PaymentRequiredResponse([
+                createExactDevnetRequirement(),
+              ]),
             });
           }
 
@@ -2752,12 +3016,9 @@ await t.test("call command", async (t) => {
                 method: "POST",
                 body: '{"x":1}',
               },
-              response: new Response("", {
-                status: 402,
-                headers: {
-                  "payment-required": "challenge",
-                },
-              }),
+              response: createV2PaymentRequiredResponse([
+                createExactDevnetRequirement(),
+              ]),
             });
           }
 
@@ -2830,10 +3091,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -2903,10 +3163,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -2985,10 +3244,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3050,10 +3308,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3113,10 +3370,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3173,10 +3429,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3232,10 +3487,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3296,10 +3550,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,
@@ -3357,10 +3610,9 @@ await t.test("call command", async (t) => {
             tool: "curl",
             url: "https://example.com",
             requestInit: { method: "GET" },
-            response: new Response(
-              JSON.stringify({ x402Version: 1, accepts: [] }),
-              { status: 402 },
-            ),
+            response: createV2PaymentRequiredResponse([
+              createExactDevnetRequirement(),
+            ]),
           });
         },
         checkPreflightBalance: async () => void 0,

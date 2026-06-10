@@ -560,6 +560,7 @@ async function createSession(args: {
     | "getCreateEscrowInstructionAsync"
     | "getDepositInstructionAsync"
     | "getRegisterSessionKeyInstructionAsync"
+    | "now"
     | "sendInstructions"
   >;
   storePath?: string;
@@ -575,7 +576,7 @@ async function createSession(args: {
   );
   const createIx = await args.deps.getCreateEscrowInstructionAsync({
     owner: args.owner,
-    index: BigInt(Date.now()),
+    index: BigInt(args.deps.now()),
     facilitator: toSolanaAddress(args.requirement.facilitator),
     refundTimeoutSlots,
     deadmanTimeoutSlots,

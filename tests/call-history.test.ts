@@ -55,6 +55,16 @@ const flexRequirement = {
   },
 };
 
+const exactRequirement = {
+  scheme: "exact",
+  network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  amount: "1000",
+  asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  payTo: "receiver",
+  maxTimeoutSeconds: 60,
+  extra: { decimals: 6 },
+};
+
 function createLoadedConfig(): LoadedConfig {
   return {
     path: "/tmp/config.toml",
@@ -154,7 +164,7 @@ function createPaymentRequiredResult(args: {
           url: args.url,
           method: args.requestInit.method ?? "GET",
         },
-        accepts: [],
+        accepts: [exactRequirement],
       }),
       {
         status: 402,
@@ -166,7 +176,7 @@ function createPaymentRequiredResult(args: {
                 url: args.url,
                 method: args.requestInit.method ?? "GET",
               },
-              accepts: [],
+              accepts: [exactRequirement],
             }),
             "utf8",
           ).toString("base64"),

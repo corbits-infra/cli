@@ -118,21 +118,6 @@ export function compareBaseUnitAmounts(left: string, right: string): number {
   return leftValue > rightValue ? 1 : -1;
 }
 
-export function parsePositiveBaseUnitAmount(
-  name: string,
-  value: string,
-): string {
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`${name} must be an integer base-unit amount`);
-  }
-  const normalized = trimmed.replace(/^0+(?=\d)/, "");
-  if (normalized === "0") {
-    throw new Error(`${name} must be greater than zero`);
-  }
-  return normalized;
-}
-
 export function subtractBaseUnits(left: string, right: string): string {
   const result = BigInt(left) - BigInt(right);
   return result > 0n ? result.toString() : "0";

@@ -40,10 +40,8 @@ import {
   buildPaymentRetryHeader,
   extractPaymentRequiredResponse,
   extractPaymentResponseTransaction,
-  formatPaymentRequirementMismatch,
   type PaymentMetadata,
   type RetryHeader,
-  selectPaymentRequirement,
 } from "../payment/signer.js";
 import {
   buildFlexPaymentRetryHeader,
@@ -52,18 +50,25 @@ import {
   type FlexPaymentMetadata,
 } from "../payment/flex-solana.js";
 import {
-  formatFlexRequirementMismatch,
   type FlexRequirementDetails,
   hasFlexRequirements,
   isFlexScheme,
   selectFlexRequirement,
 } from "../payment/flex.js";
 import {
+  formatPaymentAttemptIssues,
+  resolvePaymentAttempt,
+  type PaymentAttemptResolution,
+} from "../payment/resolve.js";
+import {
   getPaymentRequirementInspection,
   printPaymentRequirementInspection,
   type PaymentRequirementInspection,
 } from "../payment/options.js";
-import { formatPaymentOptionNetwork } from "../payment/requirements.js";
+import {
+  formatPaymentOptionNetwork,
+  type PaymentRequirementDetails,
+} from "../payment/requirements.js";
 import {
   checkPreflightBalance,
   defaultPreflightBalanceDeps,
@@ -96,6 +101,7 @@ type CallDeps = {
     config: ResolvedConfig,
     firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
     deps: PreflightBalanceDeps,
+    requirement?: PaymentRequirementDetails,
   ) => Promise<void>;
   preflightBalanceDeps?: PreflightBalanceDeps;
 };
@@ -268,14 +274,7 @@ function compareNormalizedDecimalStrings(left: string, right: string): number {
   return paddedLeft > paddedRight ? 1 : -1;
 }
 
-function normalizePaymentToUsd(
-  selection: ReturnType<typeof selectPaymentRequirement>,
-) {
-  if (selection.kind !== "selected") {
-    throw new Error("expected a selected payment requirement");
-  }
-
-  const { selected } = selection;
+function normalizePaymentToUsd(selected: PaymentRequirementDetails) {
   if (selected.symbol == null) {
     throw new Error(
       "selected payment asset could not be normalized to USD safely",
@@ -821,6 +820,7 @@ function prepareExactPaidRetry(args: {
   >;
   context: PaidRetryContext;
   yes: boolean;
+  requirement: PaymentRequirementDetails;
 }): PreparedPaidRetry<PaymentMetadata> {
   const checkPreflight =
     args.deps.checkPreflightBalance ?? checkPreflightBalance;
@@ -833,6 +833,7 @@ function prepareExactPaidRetry(args: {
         args.context.config,
         args.context.firstAttempt,
         preflightBalanceDeps,
+        args.requirement,
       ),
     confirm: () =>
       maybeConfirmPayment({
@@ -844,7 +845,7 @@ function prepareExactPaidRetry(args: {
         },
         config: args.context.config,
         yes: args.yes,
-        firstAttempt: args.context.firstAttempt,
+        requirement: args.requirement,
       }),
     buildHeader: () =>
       args.deps.buildPaymentRetryHeader({
@@ -852,6 +853,7 @@ function prepareExactPaidRetry(args: {
         url: args.context.firstAttempt.url,
         response: args.context.firstAttempt.response,
         requestInit: args.context.firstAttempt.requestInit,
+        requirement: args.requirement,
       }),
     getOutputPaymentInfo: (payment, retry) => {
       const settledTransaction = extractPaymentResponseTransaction(
@@ -942,36 +944,16 @@ async function maybeConfirmPayment(args: {
   deps: Pick<CallDeps, "canPromptForConfirmation" | "confirmPayment">;
   config: ResolvedConfig;
   yes: boolean;
-  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+  requirement: PaymentRequirementDetails;
 }): Promise<boolean> {
   const thresholdUsd = args.config.spending?.confirmAboveUsd;
   if (thresholdUsd == null) {
     return true;
   }
 
-  let paymentRequired;
-  try {
-    paymentRequired = await extractPaymentRequiredResponse(
-      args.firstAttempt.response.clone(),
-      args.firstAttempt.url,
-    );
-  } catch (err) {
-    write402Error(err instanceof Error ? err.message : String(err));
-    return false;
-  }
-
-  const selection = selectPaymentRequirement({
-    accepts: paymentRequired.accepts,
-    config: args.config,
-  });
-  if (selection.kind !== "selected") {
-    write402Error(formatPaymentRequirementMismatch(args.config, selection));
-    return false;
-  }
-
   let normalizedPayment;
   try {
-    normalizedPayment = normalizePaymentToUsd(selection);
+    normalizedPayment = normalizePaymentToUsd(args.requirement);
   } catch (err) {
     write402Error(
       `${err instanceof Error ? err.message : String(err)}; use --inspect to review the payment challenge before retrying`,
@@ -1182,41 +1164,53 @@ export function createCallCommand(deps: CallDeps) {
         }
       }
 
-      let paymentRequired:
-        | Awaited<ReturnType<typeof extractPaymentRequiredResponse>>
-        | undefined;
+      let paymentRequired: Awaited<
+        ReturnType<typeof extractPaymentRequiredResponse>
+      >;
       try {
         paymentRequired = await extractPaymentRequiredResponse(
           result.response.clone(),
           result.url,
         );
-      } catch {
-        paymentRequired = undefined;
+      } catch (err) {
+        write402Error(err instanceof Error ? err.message : String(err));
+        return;
       }
 
-      const flexSelection =
-        paymentRequired == null
-          ? undefined
-          : selectFlexRequirement({
-              accepts: paymentRequired.accepts,
+      const context = {
+        config: activeConfig,
+        tool: result.tool,
+        clientArgs,
+        printPaymentInfo: paymentInfo,
+        paymentInfoFormat: paymentInfo
+          ? await resolveOutputFormat(formatArg)
+          : "table",
+        saveResponse,
+        firstAttempt: result,
+      };
+
+      const resolution: PaymentAttemptResolution =
+        flexSession == null
+          ? resolvePaymentAttempt({
+              challenge: paymentRequired,
               config: activeConfig,
+            })
+          : resolvePaymentAttempt({
+              challenge: paymentRequired,
+              config: activeConfig,
+              intent: { method: "flex" },
             });
-      if (flexSelection?.kind === "selected") {
+
+      if (resolution.kind === "unresolved") {
+        write402Error(formatPaymentAttemptIssues(resolution.issues));
+        return;
+      }
+
+      if (resolution.attempt.method === "flex") {
         const promptAllowed =
           deps.canPromptForConfirmation ?? canPromptForConfirmation;
         const canPrompt = !yes && promptAllowed();
         const allowCreateOrTopup = yes || canPrompt;
-        const context = {
-          config: activeConfig,
-          tool: result.tool,
-          clientArgs,
-          printPaymentInfo: paymentInfo,
-          paymentInfoFormat: paymentInfo
-            ? await resolveOutputFormat(formatArg)
-            : "table",
-          saveResponse,
-          firstAttempt: result,
-        };
         await runPaidRetry({
           deps: {
             runWrappedClient: deps.runWrappedClient,
@@ -1242,36 +1236,6 @@ export function createCallCommand(deps: CallDeps) {
         });
         return;
       }
-
-      if (
-        paymentRequired != null &&
-        flexSelection != null &&
-        hasFlexRequirements(paymentRequired.accepts)
-      ) {
-        write402Error(
-          formatFlexRequirementMismatch(activeConfig, flexSelection),
-        );
-        return;
-      }
-
-      if (flexSession != null) {
-        write402Error(
-          "--flex-session can only be used with a Flex payment challenge",
-        );
-        return;
-      }
-
-      const context = {
-        config: activeConfig,
-        tool: result.tool,
-        clientArgs,
-        printPaymentInfo: paymentInfo,
-        paymentInfoFormat: paymentInfo
-          ? await resolveOutputFormat(formatArg)
-          : "table",
-        saveResponse,
-        firstAttempt: result,
-      };
       await runPaidRetry({
         deps: {
           runWrappedClient: deps.runWrappedClient,
@@ -1290,6 +1254,7 @@ export function createCallCommand(deps: CallDeps) {
             confirmPayment: deps.confirmPayment ?? promptForPaymentConfirmation,
           },
           context,
+          requirement: resolution.attempt.requirement,
           yes,
         }),
       });
