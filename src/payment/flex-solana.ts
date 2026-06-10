@@ -11,13 +11,18 @@ import {
   createSolanaRpc,
   createTransactionMessage,
   getAddressFromPublicKey,
+  getAddressEncoder,
   getBase64EncodedWireTransaction,
+  getBytesEncoder,
+  getProgramDerivedAddress,
+  getU64Encoder,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
 } from "@solana/kit";
 import {
+  FLEX_PROGRAM_ADDRESS,
   fetchEscrowAccount,
   fetchSessionKey,
   findPendingSettlementsByEscrow,
@@ -72,6 +77,8 @@ const DEFAULT_REFUND_TIMEOUT_SLOTS = 300n;
 const MIN_DEADMAN_TIMEOUT_SLOTS = 1_000n;
 const DEFAULT_DEADMAN_TIMEOUT_SLOTS = 100_000n;
 const DEFAULT_MAX_SESSION_KEYS = 10;
+const FLEX_ESCROW_SEED = new Uint8Array([101, 115, 99, 114, 111, 119]);
+const FLEX_SESSION_SEED = new Uint8Array([115, 101, 115, 115, 105, 111, 110]);
 
 type SolanaRpc = ReturnType<typeof createSolanaRpc>;
 type FlexReadRpc = Parameters<typeof fetchEscrowAccount>[0];
@@ -85,6 +92,38 @@ function asFlexReadRpc(rpc: SolanaRpc): FlexReadRpc {
 
 function asFlexPaymentHandlerRpc(rpc: SolanaRpc): FlexPaymentHandlerRpc {
   return rpc as unknown as FlexPaymentHandlerRpc;
+}
+
+async function findFlexEscrowPda(args: {
+  owner: Address;
+  index: bigint;
+}): Promise<Address> {
+  const [address] = await getProgramDerivedAddress({
+    programAddress: FLEX_PROGRAM_ADDRESS,
+    seeds: [
+      getBytesEncoder().encode(FLEX_ESCROW_SEED),
+      getAddressEncoder().encode(args.owner),
+      getU64Encoder().encode(args.index),
+    ],
+  });
+
+  return address;
+}
+
+async function findFlexRegisterSessionKeyAccountPda(args: {
+  escrow: Address;
+  sessionKey: Address;
+}): Promise<Address> {
+  const [address] = await getProgramDerivedAddress({
+    programAddress: FLEX_PROGRAM_ADDRESS,
+    seeds: [
+      getBytesEncoder().encode(FLEX_SESSION_SEED),
+      getAddressEncoder().encode(args.escrow),
+      getAddressEncoder().encode(args.sessionKey),
+    ],
+  });
+
+  return address;
 }
 
 export type FlexPaymentMetadata = {
@@ -574,36 +613,38 @@ async function createSession(args: {
   const { refundTimeoutSlots, deadmanTimeoutSlots } = getFlexEscrowTimeoutSlots(
     args.requirement.minGracePeriodSlots,
   );
+  const escrowIndex = BigInt(args.deps.now());
+  const escrowAddress = await findFlexEscrowPda({
+    owner: args.owner.address,
+    index: escrowIndex,
+  });
   const createIx = await args.deps.getCreateEscrowInstructionAsync({
     owner: args.owner,
-    index: BigInt(args.deps.now()),
+    escrow: escrowAddress,
+    index: escrowIndex,
     facilitator: toSolanaAddress(args.requirement.facilitator),
     refundTimeoutSlots,
     deadmanTimeoutSlots,
     maxSessionKeys: DEFAULT_MAX_SESSION_KEYS,
   });
-  const escrowMeta = createIx.accounts[1];
-  if (escrowMeta == null) {
-    throw new Error("escrow account meta missing");
-  }
-  const escrowAddress = escrowMeta.address;
   await args.deps.sendInstructions(args.rpc, args.owner, [createIx]);
 
   const sessionKeyPair = await args.deps.generateFlexSessionKeyPair();
   const sessionKeyAddress = await args.deps.getAddressFromPublicKey(
     sessionKeyPair.publicKey,
   );
+  const sessionKeyAccount = await findFlexRegisterSessionKeyAccountPda({
+    escrow: escrowAddress,
+    sessionKey: sessionKeyAddress,
+  });
   const registerIx = await args.deps.getRegisterSessionKeyInstructionAsync({
     owner: args.owner,
     escrow: escrowAddress,
     sessionKey: sessionKeyAddress,
+    sessionKeyAccount,
     expiresAtSlot: null,
     revocationGracePeriodSlots: args.requirement.minGracePeriodSlots,
   });
-  const sessionKeyMeta = registerIx.accounts[2];
-  if (sessionKeyMeta == null) {
-    throw new Error("session key account meta missing");
-  }
 
   const record = await createFlexSessionRecord({
     ownerAddress: args.config.activeWallet.address,
@@ -612,7 +653,7 @@ async function createSession(args: {
     facilitator: args.requirement.facilitator,
     escrow: escrowAddress,
     sessionKeyAddress,
-    sessionKeyAccount: sessionKeyMeta.address,
+    sessionKeyAccount,
     depositedAmount: "0",
     ...(args.storePath == null ? {} : { storePath: args.storePath }),
   });
