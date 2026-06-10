@@ -6,7 +6,7 @@ import {
   type OutputFormat,
   writeLine,
 } from "../output/format.js";
-import { formatStatus } from "../output/brand.js";
+import { formatStatus, printBrandHeader } from "../output/brand.js";
 import {
   ConfigError,
   type ConfigUpdateInput,
@@ -54,6 +54,7 @@ function printConfigMutationResult(
   summary: string | undefined,
   rows: string[][],
   payload: unknown,
+  options: { brandHeader?: boolean } = {},
 ): void {
   if (format === "json") {
     printJSON(payload);
@@ -65,6 +66,9 @@ function printConfigMutationResult(
     return;
   }
 
+  if (options.brandHeader === true) {
+    printBrandHeader();
+  }
   if (summary != null) {
     writeLine(formatStatus(summary, "success"));
   }
@@ -79,10 +83,11 @@ async function saveConfigAndPrintMutationResult(
   summary: string | undefined,
   rows: string[][],
   payload: unknown,
+  options: { brandHeader?: boolean } = {},
 ): Promise<void> {
   await saveConfig(path, config);
   const format = await resolveOutputFormat(undefined, path);
-  printConfigMutationResult(format, summary, rows, payload);
+  printConfigMutationResult(format, summary, rows, payload, options);
 }
 
 const configMutationArgs = {
@@ -354,6 +359,7 @@ export const configInit = command({
               spending_confirm_above_usd: config.spending?.confirm_above_usd,
             }),
       },
+      { brandHeader: true },
     );
   },
 });
