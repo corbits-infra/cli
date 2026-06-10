@@ -101,6 +101,7 @@ type BuildPaymentRetryHeaderArgs = {
   response: Response;
   url: string;
   requestInit: RequestInit;
+  requirement?: PaymentRequirementDetails;
 };
 
 type BuildPaymentRetryHeaderDeps = {
@@ -596,9 +597,26 @@ export function selectPaymentRequirement(args: {
   accepts: x402PaymentRequirementsV2[];
   config: ResolvedConfig;
 }): PaymentRequirementSelection {
+  return selectExactPaymentRequirement(args);
+}
+
+export function hasExactPaymentRequirements(
+  accepts: x402PaymentRequirementsV2[],
+): boolean {
+  return getPaymentRequirementDetails(accepts).some(
+    (detail) => detail.scheme === "exact",
+  );
+}
+
+export function selectExactPaymentRequirement(args: {
+  accepts: x402PaymentRequirementsV2[];
+  config: ResolvedConfig;
+}): PaymentRequirementSelection {
   const requestedAsset = args.config.payment.asset;
   const activeNetwork = getConfiguredPaymentNetwork(args.config);
-  const options = getPaymentRequirementDetails(args.accepts);
+  const options = getPaymentRequirementDetails(args.accepts).filter(
+    (option) => option.scheme === "exact",
+  );
   const activeNetworkOptions = dedupeExactPaymentRequirements(
     options.filter((option) => option.network === activeNetwork),
   );
@@ -643,6 +661,24 @@ export function selectPaymentRequirement(args: {
     activeNetwork,
     requestedAsset,
     options: dedupePaymentOptions(activeNetworkOptions),
+  };
+}
+
+function selectedPaymentRequirement(args: {
+  config: ResolvedConfig;
+  requirement: PaymentRequirementDetails;
+}): Extract<PaymentRequirementSelection, { kind: "selected" }> {
+  if (args.requirement.scheme !== "exact") {
+    throw new Error(
+      `selected payment requirement uses unsupported scheme ${args.requirement.scheme}`,
+    );
+  }
+
+  return {
+    kind: "selected",
+    activeNetwork: getConfiguredPaymentNetwork(args.config),
+    requestedAsset: args.config.payment.asset,
+    selected: args.requirement,
   };
 }
 
@@ -796,10 +832,16 @@ export function createBuildPaymentRetryHeader(
       args.response,
       args.url,
     );
-    const selection = selectPaymentRequirement({
-      accepts: paymentRequired.accepts,
-      config: args.config,
-    });
+    const selection =
+      args.requirement == null
+        ? selectPaymentRequirement({
+            accepts: paymentRequired.accepts,
+            config: args.config,
+          })
+        : selectedPaymentRequirement({
+            config: args.config,
+            requirement: args.requirement,
+          });
     if (selection.kind !== "selected") {
       throw new Error(formatPaymentRequirementMismatch(args.config, selection));
     }

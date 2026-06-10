@@ -397,11 +397,15 @@ await t.test(
         }) as unknown as ReturnType<
           FlexSolanaDeps["createRpc"]
         >) as FlexSolanaDeps["createRpc"],
-      getCreateEscrowInstructionAsync: (async () =>
-        testInstruction("create", [
+      getCreateEscrowInstructionAsync: (async (
+        input: Parameters<FlexSolanaDeps["getCreateEscrowInstructionAsync"]>[0],
+      ) => {
+        t.equal(input.index, 1234567890n);
+        return testInstruction("create", [
           { address: await randomAddress() },
           { address: escrowAddress },
-        ])) as unknown as FlexSolanaDeps["getCreateEscrowInstructionAsync"],
+        ]);
+      }) as unknown as FlexSolanaDeps["getCreateEscrowInstructionAsync"],
       getDepositInstructionAsync: (async () =>
         testInstruction(
           "deposit",
@@ -418,6 +422,7 @@ await t.test(
           "verify",
         ]) as Promise<webcrypto.CryptoKeyPair>,
       getAddressFromPublicKey: async () => sessionKeyAddress,
+      now: () => 1234567890,
       sendInstructions: async (_rpc, _feePayer, instructions) => {
         const firstInstruction = instructions[0];
         if (firstInstruction == null) {

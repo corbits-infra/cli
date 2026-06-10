@@ -25,6 +25,7 @@ import { getEvmChainInfoForNetwork } from "./networks.js";
 import {
   resolveKnownPaymentAsset,
   type KnownPaymentAssetDetails,
+  type PaymentRequirementDetails,
 } from "./requirements.js";
 import {
   extractPaymentRequiredResponse,
@@ -161,15 +162,25 @@ export async function checkPreflightBalance(
   config: ResolvedConfig,
   firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
   deps: PreflightBalanceDeps,
+  requirement?: PaymentRequirementDetails,
 ): Promise<void> {
-  const { accepts } = await deps.parseRequirements(
-    firstAttempt.response.clone(),
-    firstAttempt.url,
-  );
-  const selection = selectPaymentRequirement({
-    accepts,
-    config,
-  });
+  const selection =
+    requirement == null
+      ? selectPaymentRequirement({
+          accepts: (
+            await deps.parseRequirements(
+              firstAttempt.response.clone(),
+              firstAttempt.url,
+            )
+          ).accepts,
+          config,
+        })
+      : {
+          kind: "selected" as const,
+          activeNetwork: requirement.network,
+          requestedAsset: config.payment.asset,
+          selected: requirement,
+        };
   if (selection.kind !== "selected") {
     throw new Error(formatPaymentRequirementMismatch(config, selection));
   }

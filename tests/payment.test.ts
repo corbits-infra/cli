@@ -565,6 +565,96 @@ await t.test("payment signer", async (t) => {
   );
 
   await t.test(
+    "builds exact retry headers from mixed Flex and exact challenges",
+    async (t) => {
+      let seenAccepts: unknown[] | undefined;
+      const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
+        buildPaymentHandler: async () => ({
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          handler: async (_context, accepts) => {
+            seenAccepts = accepts;
+            const firstAccept = accepts[0];
+            if (firstAccept == null) {
+              throw new Error("expected a supported payment requirement");
+            }
+
+            return [
+              {
+                requirements: firstAccept,
+                exec: async () => ({
+                  payload: {
+                    signature: "0xpaid-exact",
+                  },
+                }),
+              },
+            ];
+          },
+        }),
+      });
+
+      const exactRequirement = {
+        scheme: "exact",
+        network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        amount: "1000",
+        payTo: "receiver",
+        maxTimeoutSeconds: 60,
+        asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        extra: {
+          decimals: 6,
+        },
+      };
+
+      const header = await buildPaymentRetryHeader({
+        config: createSolanaKeypairConfig(),
+        response: new Response("", {
+          status: 402,
+          statusText: "Payment Required",
+          headers: {
+            [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+              JSON.stringify({
+                x402Version: 2,
+                resource: {
+                  url: "https://example.com",
+                  method: "POST",
+                },
+                accepts: [
+                  {
+                    scheme: "flex",
+                    network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                    amount: "1000",
+                    payTo: "unused",
+                    maxTimeoutSeconds: 60,
+                    asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                    extra: {
+                      facilitator: "Facilitator111111111111111111111111111111",
+                      minGracePeriodSlots: "12",
+                      decimals: 6,
+                    },
+                  },
+                  exactRequirement,
+                ],
+              }),
+              "utf8",
+            ).toString("base64"),
+          },
+        }),
+        url: "https://example.com",
+        requestInit: {
+          method: "POST",
+          body: '{"ok":true}',
+        },
+      });
+
+      t.same(seenAccepts, [exactRequirement]);
+      t.equal(header.header.name, V2_PAYMENT_HEADER);
+      t.match(
+        Buffer.from(header.header.value, "base64").toString("utf8"),
+        /"scheme":"exact"/,
+      );
+    },
+  );
+
+  await t.test(
     "adds required payment identifier extensions to v2 retry headers",
     async (t) => {
       const buildPaymentRetryHeader = createBuildPaymentRetryHeader({
