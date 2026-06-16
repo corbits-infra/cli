@@ -9,3 +9,4 @@ tmp
 .build-finished
 .DS_Store
 .tap
+dispatch/
