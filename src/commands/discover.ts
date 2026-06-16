@@ -8,6 +8,7 @@ import {
   printYaml,
   writeLine,
 } from "../output/format.js";
+import { formatSectionTitle, formatStatus } from "../output/brand.js";
 import { formatFlag, resolveOutputFormat } from "../flags.js";
 
 export const discover = command({
@@ -43,7 +44,7 @@ export const discover = command({
     }
 
     if (proxies.length === 0 && endpoints.length === 0) {
-      writeLine("No services found.");
+      writeLine(formatStatus("No services found."));
       return;
     }
 
@@ -73,7 +74,7 @@ export const discover = command({
 
     if (endpoints.length > 0) {
       if (proxies.length > 0) writeLine("");
-      writeLine("Matching endpoints:");
+      writeLine(formatSectionTitle("Matching endpoints"));
       printFormatted(
         format,
         endpoints,

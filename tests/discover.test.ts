@@ -17,6 +17,25 @@ function parseJSON(value: string): unknown {
   return JSON.parse(value) as unknown;
 }
 
+function forceColor(test: { teardown(fn: () => void): void }): void {
+  const prior = process.env.FORCE_COLOR;
+  const priorNoColor = process.env.NO_COLOR;
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  test.teardown(() => {
+    if (prior === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = prior;
+    }
+    if (priorNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = priorNoColor;
+    }
+  });
+}
+
 await t.test("discover command", async (t) => {
   withTempConfigHome(t);
 
@@ -129,6 +148,7 @@ await t.test("discover command", async (t) => {
   });
 
   await t.test("shows no services found message", async (t) => {
+    forceColor(t);
     const mock = mockFetch(() => ({
       status: 200,
       body: {
@@ -146,6 +166,7 @@ await t.test("discover command", async (t) => {
       }),
     );
     t.ok(output.includes("No services found"));
+    t.notMatch(output, /______/);
     t.end();
   });
 

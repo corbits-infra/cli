@@ -33,6 +33,25 @@ async function seedConfig(options?: {
   );
 }
 
+function forceColor(test: { teardown(fn: () => void): void }): void {
+  const prior = process.env.FORCE_COLOR;
+  const priorNoColor = process.env.NO_COLOR;
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  test.teardown(() => {
+    if (prior === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = prior;
+    }
+    if (priorNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = priorNoColor;
+    }
+  });
+}
+
 await t.test("config commands", async (t) => {
   await t.test("exports only the simplified command surface", async (t) => {
     t.equal("configUse" in configCommands, false);
@@ -51,6 +70,7 @@ await t.test("config commands", async (t) => {
 
   await t.test("init success paths", async (t) => {
     await t.test("initializes a Solana payment config", async (t) => {
+      forceColor(t);
       const configHome = withTempConfigHome(t);
 
       const output = await captureStdout(() =>
@@ -71,6 +91,7 @@ await t.test("config commands", async (t) => {
       );
 
       t.match(output, /config: initialized/);
+      t.match(output, /\\____\\___/);
       t.match(output, /payment_network/);
       t.match(output, /payment_address/);
       t.match(output, /7xKX\.\.\./);

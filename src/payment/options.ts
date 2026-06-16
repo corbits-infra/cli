@@ -8,6 +8,7 @@ import {
   writeLine,
   type OutputFormat,
 } from "../output/format.js";
+import { formatKeyValue } from "../output/brand.js";
 import {
   formatPaymentOptionNetwork,
   getPaymentRequirementDetails,
@@ -47,6 +48,18 @@ export type PaymentRequirementInspection = {
     payTo: string;
     maxTimeoutSeconds: number;
     extra?: Record<string, unknown> | null;
+    flex?: {
+      facilitator?: string;
+      matchingSessions?: {
+        id: string;
+        status: string;
+        escrow: string;
+        onChainAvailableAmount?: string;
+        onChainVaultBalance?: string;
+        onChainPendingAmount?: string;
+        issue?: string;
+      }[];
+    };
   }[];
 };
 
@@ -162,9 +175,9 @@ export function printPaymentRequirementInspection(
     return;
   }
 
-  writeLine(`x402 Version: ${inspection.version}`);
+  writeLine(formatKeyValue("x402 Version", String(inspection.version)));
   if (inspection.resource != null) {
-    writeLine(`Resource: ${inspection.resource.url}`);
+    writeLine(formatKeyValue("Resource", inspection.resource.url));
   }
   writeLine("");
   printTable(
@@ -177,6 +190,7 @@ export function printPaymentRequirementInspection(
       "Pay To",
       "Timeout",
       "Extra",
+      "Flex Sessions",
     ],
     inspection.requirements.map((requirement) => [
       requirement.scheme,
@@ -187,6 +201,15 @@ export function printPaymentRequirementInspection(
       requirement.payTo,
       String(requirement.maxTimeoutSeconds),
       formatExtra(requirement.extra),
+      requirement.flex?.matchingSessions
+        ?.map((session) =>
+          session.issue == null
+            ? `${session.id} onChainAvailable=${
+                session.onChainAvailableAmount ?? "unknown"
+              }`
+            : `${session.id} ${session.issue}`,
+        )
+        .join("; ") ?? "",
     ]),
   );
 }

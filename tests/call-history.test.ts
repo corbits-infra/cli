@@ -5,11 +5,27 @@ import path from "node:path";
 import t from "tap";
 import { V2_PAYMENT_REQUIRED_HEADER } from "@faremeter/types/x402v2";
 import { createCallCommand } from "../src/commands/call.js";
-import { getHistoryPath, readHistoryEntry } from "../src/history/store.js";
+import {
+  appendHistoryRecord,
+  getHistoryPath,
+  readHistoryEntry,
+} from "../src/history/store.js";
 import type { LoadedConfig } from "../src/config/index.js";
 import type { PreflightBalanceDeps } from "../src/payment/balance.js";
 import type { WrappedRunResult } from "../src/process/wrapped-client.js";
 import { captureCombinedOutput, withTempDataHome } from "./test-helpers.js";
+
+type CallCommandDeps = Parameters<typeof createCallCommand>[0];
+
+function createHistoryCallCommand(
+  deps: Omit<CallCommandDeps, "appendHistoryRecord"> &
+    Partial<Pick<CallCommandDeps, "appendHistoryRecord">>,
+) {
+  return createCallCommand({
+    appendHistoryRecord,
+    ...deps,
+  });
+}
 
 const resolvedConfig = {
   version: 1,
@@ -33,6 +49,37 @@ const resolvedConfig = {
     expandedPath: "/tmp/solana-id.json",
   },
 } as const;
+
+const flexRequirement = {
+  scheme: "flex",
+  network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  amount: "1000",
+  asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  payTo: "unused",
+  maxTimeoutSeconds: 60,
+  extra: {
+    facilitator: "Facilitator111111111111111111111111111111",
+    supportedMints: ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"],
+    splits: [
+      {
+        recipient: "Recipient11111111111111111111111111111111",
+        bps: 10000,
+      },
+    ],
+    minGracePeriodSlots: "12",
+    decimals: 6,
+  },
+};
+
+const exactRequirement = {
+  scheme: "exact",
+  network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  amount: "1000",
+  asset: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  payTo: "receiver",
+  maxTimeoutSeconds: 60,
+  extra: { decimals: 6 },
+};
 
 function createLoadedConfig(): LoadedConfig {
   return {
@@ -88,6 +135,35 @@ function createStreamedCompletedResult(args: {
   };
 }
 
+function createFlexPaymentRequiredResult(args: {
+  url: string;
+  requestInit: RequestInit;
+}): Extract<WrappedRunResult, { kind: "payment-required" }> {
+  return {
+    kind: "payment-required",
+    tool: "curl",
+    url: args.url,
+    requestInit: args.requestInit,
+    response: new Response("", {
+      status: 402,
+      statusText: "Payment Required",
+      headers: {
+        [V2_PAYMENT_REQUIRED_HEADER]: Buffer.from(
+          JSON.stringify({
+            x402Version: 2,
+            resource: {
+              url: args.url,
+              method: args.requestInit.method ?? "GET",
+            },
+            accepts: [flexRequirement],
+          }),
+          "utf8",
+        ).toString("base64"),
+      },
+    }),
+  };
+}
+
 function createPaymentRequiredResult(args: {
   url: string;
   requestInit: RequestInit;
@@ -104,7 +180,7 @@ function createPaymentRequiredResult(args: {
           url: args.url,
           method: args.requestInit.method ?? "GET",
         },
-        accepts: [],
+        accepts: [exactRequirement],
       }),
       {
         status: 402,
@@ -116,7 +192,7 @@ function createPaymentRequiredResult(args: {
                 url: args.url,
                 method: args.requestInit.method ?? "GET",
               },
-              accepts: [],
+              accepts: [exactRequirement],
             }),
             "utf8",
           ).toString("base64"),
@@ -128,12 +204,91 @@ function createPaymentRequiredResult(args: {
 
 await t.test("call history integration", async (t) => {
   await t.test(
+    "writes history and saved response for successful Flex paid calls",
+    async (t) => {
+      withTempDataHome(t);
+      const streamOutputModes: boolean[] = [];
+      let allowCreateOrTopup: boolean | undefined;
+
+      const call = createHistoryCallCommand({
+        loadRequiredConfig: async () => createLoadedConfig(),
+        buildPaymentRetryHeader: async () => {
+          throw new Error("should not use exact payment builder");
+        },
+        buildFlexPaymentRetryHeader: async (args) => {
+          allowCreateOrTopup = args.allowCreateOrTopup;
+          return {
+            detectedVersion: 2,
+            header: { name: "X-PAYMENT", value: "flex-paid" },
+            paymentInfo: {
+              amount: flexRequirement.amount,
+              asset: flexRequirement.asset,
+              assetSymbol: "USDC",
+              network: flexRequirement.network,
+              decimals: 6,
+              sessionId: "flex-session-1",
+              escrow: "Escrow1111111111111111111111111111111111",
+            },
+          };
+        },
+        runWrappedClient: async (args) =>
+          args.extraHeader == null
+            ? createFlexPaymentRequiredResult({
+                url: "https://example.com/flex",
+                requestInit: { method: "POST", body: '{"query":"flex"}' },
+              })
+            : (() => {
+                streamOutputModes.push(args.streamOutput === true);
+                return createCompletedResult({
+                  exitCode: 0,
+                  stdout: '{"ok":true}',
+                });
+              })(),
+        canPromptForConfirmation: () => false,
+      });
+
+      const output = await captureCombinedOutput(async () => {
+        await call.handler({
+          inspect: false,
+          paymentInfo: false,
+          saveResponse: true,
+          yes: true,
+          flexSession: undefined,
+          asset: undefined,
+          format: undefined,
+          tool: "curl",
+          args: ["https://example.com/flex"],
+        });
+      });
+
+      t.match(output, /\{"ok":true\}/);
+      t.equal(allowCreateOrTopup, true);
+      const entry = await readHistoryEntry(1);
+      t.equal(entry?.record.method, "POST");
+      t.equal(entry?.record.host, "example.com");
+      t.equal(entry?.record.resource_path, "/flex");
+      t.equal(entry?.record.amount, flexRequirement.amount);
+      t.equal(entry?.record.asset, flexRequirement.asset);
+      t.equal(entry?.record.asset_symbol, "USDC");
+      t.equal(entry?.record.network, "solana-devnet");
+      t.equal(entry?.record.wallet_kind, "keypair");
+      t.equal(
+        entry?.response == null
+          ? undefined
+          : Buffer.from(entry.response).toString("utf8"),
+        '{"ok":true}',
+      );
+      t.same(streamOutputModes, [false]);
+    },
+  );
+
+  await t.test(
     "writes a metadata history entry for successful paid calls",
     async (t) => {
       withTempDataHome(t);
       const streamOutputModes: boolean[] = [];
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 2,
@@ -173,6 +328,7 @@ await t.test("call history integration", async (t) => {
         paymentInfo: false,
         saveResponse: false,
         yes: false,
+        flexSession: undefined,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -205,7 +361,7 @@ await t.test("call history integration", async (t) => {
       withTempDataHome(t);
       const streamOutputModes: boolean[] = [];
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -239,6 +395,7 @@ await t.test("call history integration", async (t) => {
         paymentInfo: false,
         saveResponse: true,
         yes: false,
+        flexSession: undefined,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -274,7 +431,7 @@ await t.test("call history integration", async (t) => {
       withTempDataHome(t);
 
       const binaryResponse = Buffer.from([0x00, 0xff, 0x41, 0x0a]);
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -309,6 +466,7 @@ await t.test("call history integration", async (t) => {
         paymentInfo: false,
         saveResponse: true,
         yes: false,
+        flexSession: undefined,
         asset: undefined,
         format: undefined,
         tool: "curl",
@@ -338,7 +496,7 @@ await t.test("call history integration", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -373,6 +531,7 @@ await t.test("call history integration", async (t) => {
           paymentInfo: false,
           saveResponse: false,
           yes: false,
+          flexSession: undefined,
           asset: undefined,
           format: undefined,
           tool: "curl",
@@ -399,7 +558,7 @@ await t.test("call history integration", async (t) => {
         process.exitCode = priorExitCode;
       });
 
-      const call = createCallCommand({
+      const call = createHistoryCallCommand({
         loadRequiredConfig: async () => createLoadedConfig(),
         buildPaymentRetryHeader: async () => ({
           detectedVersion: 1,
@@ -435,6 +594,7 @@ await t.test("call history integration", async (t) => {
           paymentInfo: false,
           saveResponse: false,
           yes: false,
+          flexSession: undefined,
           asset: undefined,
           format: undefined,
           tool: "curl",

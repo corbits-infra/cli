@@ -348,7 +348,7 @@ Payment libraries:
 - `@faremeter/wallet-solana` and `@faremeter/wallet-evm` for local wallet
   adapters.
 - `@faremeter/info` for network, asset, and token metadata.
-- `@solana/web3.js`, `@solana/spl-token`, and `viem` for chain-specific
+- `@solana/kit`, `@solana-program/token`, and `viem` for chain-specific
   primitives.
 
 Supported default payment asset is USDC. Solana payment requirement lookup also

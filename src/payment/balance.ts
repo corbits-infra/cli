@@ -1,8 +1,12 @@
-import { Connection, PublicKey } from "@solana/web3.js";
 import {
-  getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
+  address as solanaAddress,
+  createSolanaRpc,
+  type Address,
+} from "@solana/kit";
+import {
+  findAssociatedTokenPda,
+  TOKEN_PROGRAM_ADDRESS,
+} from "@solana-program/token";
 import { createPublicClient, http, isAddress, type PublicClient } from "viem";
 import { base, baseSepolia } from "viem/chains";
 import { lookupKnownAsset } from "@faremeter/info/evm";
@@ -21,6 +25,7 @@ import { getEvmChainInfoForNetwork } from "./networks.js";
 import {
   resolveKnownPaymentAsset,
   type KnownPaymentAssetDetails,
+  type PaymentRequirementDetails,
 } from "./requirements.js";
 import {
   extractPaymentRequiredResponse,
@@ -157,15 +162,25 @@ export async function checkPreflightBalance(
   config: ResolvedConfig,
   firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
   deps: PreflightBalanceDeps,
+  requirement?: PaymentRequirementDetails,
 ): Promise<void> {
-  const { accepts } = await deps.parseRequirements(
-    firstAttempt.response.clone(),
-    firstAttempt.url,
-  );
-  const selection = selectPaymentRequirement({
-    accepts,
-    config,
-  });
+  const selection =
+    requirement == null
+      ? selectPaymentRequirement({
+          accepts: (
+            await deps.parseRequirements(
+              firstAttempt.response.clone(),
+              firstAttempt.url,
+            )
+          ).accepts,
+          config,
+        })
+      : {
+          kind: "selected" as const,
+          activeNetwork: requirement.network,
+          requestedAsset: config.payment.asset,
+          selected: requirement,
+        };
   if (selection.kind !== "selected") {
     throw new Error(formatPaymentRequirementMismatch(config, selection));
   }
@@ -239,7 +254,7 @@ export function validateAddressForNetwork(
   const { family } = getPaymentNetworkContext(network);
   if (family === "solana") {
     try {
-      new PublicKey(address);
+      solanaAddress(address);
     } catch {
       throw new ConfigError(`Invalid Solana address: ${address}`);
     }
@@ -267,11 +282,14 @@ async function getSolanaTokenBalanceDefault(
   mint: string,
   owner: string,
 ): Promise<bigint> {
-  const connection = new Connection(rpcURL, "confirmed");
-  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-    new PublicKey(owner),
-    { mint: new PublicKey(mint) },
-  );
+  const rpc = createSolanaRpc(rpcURL);
+  const tokenAccounts = await rpc
+    .getTokenAccountsByOwner(
+      solanaAddress(owner),
+      { mint: solanaAddress(mint) },
+      { encoding: "jsonParsed", commitment: "confirmed" },
+    )
+    .send();
   return tokenAccounts.value.reduce((sum, account) => {
     return sum + BigInt(readParsedTokenAmount(account.account.data));
   }, 0n);
@@ -312,14 +330,19 @@ async function solanaTokenAccountExistsDefault(
   owner: string,
   tokenProgram?: string,
 ): Promise<boolean> {
-  const connection = new Connection(rpcURL, "confirmed");
-  const account = getAssociatedTokenAddressSync(
-    new PublicKey(mint),
-    new PublicKey(owner),
-    true,
-    tokenProgram == null ? TOKEN_PROGRAM_ID : new PublicKey(tokenProgram),
-  );
-  return (await connection.getAccountInfo(account)) != null;
+  const rpc = createSolanaRpc(rpcURL);
+  const [account] = await findAssociatedTokenPda({
+    mint: solanaAddress(mint),
+    owner: solanaAddress(owner),
+    tokenProgram:
+      tokenProgram == null
+        ? TOKEN_PROGRAM_ADDRESS
+        : (solanaAddress(tokenProgram) as Address),
+  });
+  const { value } = await rpc
+    .getAccountInfo(account, { commitment: "confirmed", encoding: "base64" })
+    .send();
+  return value != null;
 }
 
 const EVM_CHAINS: Record<

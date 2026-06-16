@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { address, type Address } from "@solana/kit";
 import { normalizeNetworkId, translateNetworkToLegacy } from "@faremeter/info";
 import {
   isKnownAsset,
@@ -58,7 +58,6 @@ export type PaymentMetadata = {
   assetSymbol?: string;
   network: string;
   decimals?: number;
-  txSignature?: string;
 };
 
 export type PaymentRetryHeaderResult = {
@@ -69,7 +68,7 @@ export type PaymentRetryHeaderResult = {
 
 type SolanaPaymentInfo = {
   cluster: "mainnet-beta" | "devnet";
-  mint: PublicKey;
+  mint: Address;
   network: string;
   asset: string;
 };
@@ -91,7 +90,6 @@ type BuildPaymentHandlerDeps = {
   createEvmLocalWallet: typeof createEvmLocalWallet;
   createSolanaPaymentHandler: typeof solanaExact.createPaymentHandler;
   createEvmPaymentHandler: typeof evmExact.createPaymentHandler;
-  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -103,6 +101,7 @@ type BuildPaymentRetryHeaderArgs = {
   response: Response;
   url: string;
   requestInit: RequestInit;
+  requirement?: PaymentRequirementDetails;
 };
 
 type BuildPaymentRetryHeaderDeps = {
@@ -151,14 +150,6 @@ type PaymentHandlerStrategy = {
   ) => Promise<PaymentHandlerInfo>;
 };
 
-const SOLANA_PAYMENT_HANDLER_OPTIONS = {
-  token: {
-    // Some x402 facilitators use PDA-owned settlement addresses as `payTo`.
-    // SPL ATA derivation must allow off-curve owners for those recipients.
-    allowOwnerOffCurve: true,
-  },
-} as const;
-
 function resolveSolanaPaymentInfo(
   config: ResolvedConfig,
   requirement: PaymentRequirementDetails | undefined,
@@ -173,7 +164,7 @@ function resolveSolanaPaymentInfo(
 
   return {
     cluster,
-    mint: new PublicKey(asset),
+    mint: address(asset),
     network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
     asset,
   };
@@ -266,19 +257,17 @@ async function buildSolanaKeypairHandler(
 
   const paymentInfo = resolveSolanaPaymentInfo(config, requirement, deps);
   const secretKeyText = await readActiveWalletSecret(config, deps);
-  const keypair = Keypair.fromSecretKey(parseSolanaSecretKey(secretKeyText));
+  const secretKey = parseSolanaSecretKey(secretKeyText);
   const wallet = await deps.createSolanaLocalWallet(
     paymentInfo.cluster,
-    keypair,
+    secretKey,
   );
-  const connection = deps.createConnection(config.payment.rpcURL);
 
   return {
     handler: deps.createSolanaPaymentHandler(
       wallet,
       paymentInfo.mint,
-      connection,
-      SOLANA_PAYMENT_HANDLER_OPTIONS,
+      config.payment.rpcURL,
     ),
     network: paymentInfo.network,
   };
@@ -608,9 +597,26 @@ export function selectPaymentRequirement(args: {
   accepts: x402PaymentRequirementsV2[];
   config: ResolvedConfig;
 }): PaymentRequirementSelection {
+  return selectExactPaymentRequirement(args);
+}
+
+export function hasExactPaymentRequirements(
+  accepts: x402PaymentRequirementsV2[],
+): boolean {
+  return getPaymentRequirementDetails(accepts).some(
+    (detail) => detail.scheme === "exact",
+  );
+}
+
+export function selectExactPaymentRequirement(args: {
+  accepts: x402PaymentRequirementsV2[];
+  config: ResolvedConfig;
+}): PaymentRequirementSelection {
   const requestedAsset = args.config.payment.asset;
   const activeNetwork = getConfiguredPaymentNetwork(args.config);
-  const options = getPaymentRequirementDetails(args.accepts);
+  const options = getPaymentRequirementDetails(args.accepts).filter(
+    (option) => option.scheme === "exact",
+  );
   const activeNetworkOptions = dedupeExactPaymentRequirements(
     options.filter((option) => option.network === activeNetwork),
   );
@@ -655,6 +661,24 @@ export function selectPaymentRequirement(args: {
     activeNetwork,
     requestedAsset,
     options: dedupePaymentOptions(activeNetworkOptions),
+  };
+}
+
+function selectedPaymentRequirement(args: {
+  config: ResolvedConfig;
+  requirement: PaymentRequirementDetails;
+}): Extract<PaymentRequirementSelection, { kind: "selected" }> {
+  if (args.requirement.scheme !== "exact") {
+    throw new Error(
+      `selected payment requirement uses unsupported scheme ${args.requirement.scheme}`,
+    );
+  }
+
+  return {
+    kind: "selected",
+    activeNetwork: getConfiguredPaymentNetwork(args.config),
+    requestedAsset: args.config.payment.asset,
+    selected: args.requirement,
   };
 }
 
@@ -808,10 +832,16 @@ export function createBuildPaymentRetryHeader(
       args.response,
       args.url,
     );
-    const selection = selectPaymentRequirement({
-      accepts: paymentRequired.accepts,
-      config: args.config,
-    });
+    const selection =
+      args.requirement == null
+        ? selectPaymentRequirement({
+            accepts: paymentRequired.accepts,
+            config: args.config,
+          })
+        : selectedPaymentRequirement({
+            config: args.config,
+            requirement: args.requirement,
+          });
     if (selection.kind !== "selected") {
       throw new Error(formatPaymentRequirementMismatch(args.config, selection));
     }
@@ -890,7 +920,6 @@ export const buildPaymentHandler = createBuildPaymentHandler({
   createEvmLocalWallet,
   createSolanaPaymentHandler: solanaExact.createPaymentHandler,
   createEvmPaymentHandler: evmExact.createPaymentHandler,
-  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,

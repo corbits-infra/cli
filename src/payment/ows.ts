@@ -6,10 +6,11 @@ import {
   type WalletInfo,
 } from "@open-wallet-standard/core";
 import {
-  Connection,
-  PublicKey,
-  type VersionedTransaction,
-} from "@solana/web3.js";
+  address,
+  getBase64EncodedWireTransaction,
+  type Address,
+  type Transaction,
+} from "@solana/kit";
 import { fromHex, isAddress, isAddressEqual, isHex, type Hex } from "viem";
 import {
   isKnownAsset,
@@ -51,14 +52,6 @@ export type OwsPaymentHandler = {
   network: string;
 };
 
-const SOLANA_PAYMENT_HANDLER_OPTIONS = {
-  token: {
-    // Some x402 facilitators use PDA-owned settlement addresses as `payTo`.
-    // SPL ATA derivation must allow off-curve owners for those recipients.
-    allowOwnerOffCurve: true,
-  },
-} as const;
-
 const EIP712_DOMAIN_TYPE = [
   { name: "name", type: "string" },
   { name: "version", type: "string" },
@@ -93,22 +86,35 @@ function requireEvmAddress(value: string, message: string): Hex {
 
 function signSolanaTransactionWithOws(
   walletId: string,
-  tx: VersionedTransaction,
-  publicKey: PublicKey,
+  tx: Transaction,
+  publicKey: Address,
   deps: Pick<OwsDeps, "signTransaction">,
-): void {
-  const txHex = Buffer.from(tx.serialize()).toString("hex");
+): Transaction {
+  const txHex = Buffer.from(
+    getBase64EncodedWireTransaction(tx),
+    "base64",
+  ).toString("hex");
   const { signature } = deps.signTransaction(walletId, "solana", txHex);
-  tx.addSignature(
-    publicKey,
-    fromHex(
-      requireHex(
-        signature,
-        `OWS returned an invalid Solana signature for ${walletId}`,
-      ),
-      "bytes",
+  const signatureBytes = fromHex(
+    requireHex(
+      signature,
+      `OWS returned an invalid Solana signature for ${walletId}`,
     ),
+    "bytes",
   );
+  if (signatureBytes.length !== 64) {
+    throw new ConfigError(
+      `OWS returned an invalid Solana signature for ${walletId}`,
+    );
+  }
+
+  return {
+    ...tx,
+    signatures: Object.freeze({
+      ...tx.signatures,
+      [publicKey]: signatureBytes,
+    }),
+  };
 }
 
 function normalizeTypedDataForOws(value: unknown): unknown {
@@ -212,7 +218,6 @@ export type OwsDeps = {
   getWallet: typeof getWallet;
   signTransaction: typeof owsSignTransaction;
   signTypedData: typeof owsSignTypedData;
-  createConnection: (rpcURL: string) => Connection;
   lookupKnownSPLToken: typeof lookupKnownSPLToken;
   clusterToCAIP2: typeof clusterToCAIP2;
   lookupKnownAsset: typeof lookupKnownAsset;
@@ -224,16 +229,14 @@ export type OwsDeps = {
 function buildSolanaOwsWallet(
   cluster: "mainnet-beta" | "devnet",
   walletId: string,
-  publicKey: PublicKey,
+  publicKey: Address,
   deps: Pick<OwsDeps, "signTransaction">,
 ) {
   return {
     network: cluster,
     publicKey,
-    partiallySignTransaction: async (tx: VersionedTransaction) => {
-      signSolanaTransactionWithOws(walletId, tx, publicKey, deps);
-      return tx;
-    },
+    partiallySignTransaction: async (tx: Transaction) =>
+      signSolanaTransactionWithOws(walletId, tx, publicKey, deps),
   };
 }
 
@@ -250,9 +253,8 @@ function buildSolanaOwsPaymentHandler(
     throw new ConfigError(`No known USDC mint for Solana cluster ${cluster}`);
   }
 
-  const publicKey = new PublicKey(walletAccount.account.address);
-  const connection = deps.createConnection(config.payment.rpcURL);
-  const mint = new PublicKey(asset);
+  const publicKey = address(walletAccount.account.address);
+  const mint = address(asset);
   const wallet = buildSolanaOwsWallet(
     cluster,
     walletAccount.walletId,
@@ -264,8 +266,7 @@ function buildSolanaOwsPaymentHandler(
     handler: deps.createSolanaPaymentHandler(
       wallet,
       mint,
-      connection,
-      SOLANA_PAYMENT_HANDLER_OPTIONS,
+      config.payment.rpcURL,
     ),
     network: requirement?.network ?? deps.clusterToCAIP2(cluster).caip2,
   };
@@ -361,7 +362,6 @@ export const buildOwsPaymentHandler = createBuildOwsPaymentHandler({
   getWallet,
   signTransaction: owsSignTransaction,
   signTypedData: owsSignTypedData,
-  createConnection: (rpcURL) => new Connection(rpcURL, "confirmed"),
   lookupKnownSPLToken,
   clusterToCAIP2,
   lookupKnownAsset,

@@ -5,6 +5,7 @@ import {
   printYaml,
   writeLine,
 } from "../output/format.js";
+import { formatKeyValue, formatStatus } from "../output/brand.js";
 import {
   formatPaymentNetworkDisplay,
   type PaymentNetwork,
@@ -121,32 +122,49 @@ export function printConfigView(
     return;
   }
 
-  writeLine(`Config path: ${view.path}`);
+  writeLine(formatKeyValue("Config path", view.path));
   writeLine(
-    `Payment network: ${formatPaymentNetworkDisplay(view.payment.network)}`,
+    formatKeyValue(
+      "Payment network",
+      formatPaymentNetworkDisplay(view.payment.network),
+    ),
   );
-  writeLine(`Payment family: ${view.payment.family}`);
-  writeLine(`Default format: ${view.preferences.format}`);
-  writeLine(`API URL: ${view.preferences.api_url}`);
-  writeLine(`Payment address: ${view.payment.address}`);
-  writeLine(`Payment asset: ${view.payment.asset}`);
-  writeLine(`Payment RPC URL: ${view.payment.rpc_url}`);
+  writeLine(formatKeyValue("Payment family", view.payment.family));
+  writeLine(formatKeyValue("Default format", view.preferences.format));
+  writeLine(formatKeyValue("API URL", view.preferences.api_url));
+  writeLine(formatKeyValue("Payment address", view.payment.address));
+  writeLine(formatKeyValue("Payment asset", view.payment.asset));
+  writeLine(formatKeyValue("Payment RPC URL", view.payment.rpc_url));
   if (view.payment.rpc_url_override != null) {
-    writeLine(`Payment RPC override: ${view.payment.rpc_url_override}`);
+    writeLine(
+      formatKeyValue("Payment RPC override", view.payment.rpc_url_override),
+    );
   }
   if (view.spending?.confirm_above_usd != null) {
-    writeLine(`Confirm above USD: ${view.spending.confirm_above_usd}`);
+    writeLine(
+      formatKeyValue("Confirm above USD", view.spending.confirm_above_usd),
+    );
   }
 
   if (view.active_wallet.kind === "keypair") {
-    writeLine(`Active wallet: ${view.active_wallet.family} keypair`);
-    writeLine(`Active wallet address: ${view.active_wallet.address}`);
-    writeLine(`Active wallet path: ${view.active_wallet.path}`);
-    writeLine(`Expanded wallet path: ${view.active_wallet.expanded_path}`);
+    writeLine(
+      formatKeyValue("Active wallet", `${view.active_wallet.family} keypair`),
+    );
+    writeLine(
+      formatKeyValue("Active wallet address", view.active_wallet.address),
+    );
+    writeLine(formatKeyValue("Active wallet path", view.active_wallet.path));
+    writeLine(
+      formatKeyValue("Expanded wallet path", view.active_wallet.expanded_path),
+    );
   } else {
-    writeLine(`Active wallet: ${view.active_wallet.family} ows`);
-    writeLine(`Active wallet address: ${view.active_wallet.address}`);
-    writeLine(`Active wallet id: ${view.active_wallet.wallet_id}`);
+    writeLine(
+      formatKeyValue("Active wallet", `${view.active_wallet.family} ows`),
+    );
+    writeLine(
+      formatKeyValue("Active wallet address", view.active_wallet.address),
+    );
+    writeLine(formatKeyValue("Active wallet id", view.active_wallet.wallet_id));
   }
 
   writeLine("");
@@ -178,7 +196,7 @@ export function printMissingConfig(path: string, format: OutputFormat): void {
     return;
   }
 
-  writeLine("config: not initialized");
-  writeLine(`path: ${path}`);
+  writeLine(formatStatus("config: not initialized"));
+  writeLine(formatKeyValue("path", path));
   writeLine(payload.help);
 }

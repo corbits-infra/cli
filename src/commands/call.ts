@@ -21,6 +21,16 @@ import {
 import { loadRequiredConfig, type ResolvedConfig } from "../config/index.js";
 import { formatPaymentNetworkDisplay } from "../config/schema.js";
 import {
+  brandStrong,
+  formatKeyValue,
+  formatProgressNote,
+  formatPromptChoice,
+  formatSectionTitle,
+  formatStatus,
+  isBrandOutputEnabled,
+} from "../output/brand.js";
+import {
+  formatCompactDisplayTokenAmount,
   formatJSON,
   formatDisplayTokenAmount,
   formatYaml,
@@ -30,15 +40,35 @@ import {
   buildPaymentRetryHeader,
   extractPaymentRequiredResponse,
   extractPaymentResponseTransaction,
-  formatPaymentRequirementMismatch,
   type PaymentMetadata,
-  selectPaymentRequirement,
+  type RetryHeader,
 } from "../payment/signer.js";
+import {
+  buildFlexPaymentRetryHeader,
+  getFlexSessionViews,
+  type FlexConfirmArgs,
+  type FlexPaymentMetadata,
+} from "../payment/flex-solana.js";
+import {
+  type FlexRequirementDetails,
+  hasFlexRequirements,
+  isFlexScheme,
+  selectFlexRequirement,
+} from "../payment/flex.js";
+import {
+  formatPaymentAttemptIssues,
+  resolvePaymentAttempt,
+  type PaymentAttemptResolution,
+} from "../payment/resolve.js";
 import {
   getPaymentRequirementInspection,
   printPaymentRequirementInspection,
+  type PaymentRequirementInspection,
 } from "../payment/options.js";
-import { formatPaymentOptionNetwork } from "../payment/requirements.js";
+import {
+  formatPaymentOptionNetwork,
+  type PaymentRequirementDetails,
+} from "../payment/requirements.js";
 import {
   checkPreflightBalance,
   defaultPreflightBalanceDeps,
@@ -62,20 +92,28 @@ import {
 type CallDeps = {
   loadRequiredConfig: typeof loadRequiredConfig;
   buildPaymentRetryHeader: typeof buildPaymentRetryHeader;
+  buildFlexPaymentRetryHeader?: typeof buildFlexPaymentRetryHeader;
   runWrappedClient: typeof runWrappedClient;
-  appendHistoryRecord?: typeof appendHistoryRecord;
+  appendHistoryRecord: typeof appendHistoryRecord;
   canPromptForConfirmation?: () => boolean;
   confirmPayment?: (args: ConfirmPaymentArgs) => Promise<boolean>;
   checkPreflightBalance?: (
     config: ResolvedConfig,
     firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>,
     deps: PreflightBalanceDeps,
+    requirement?: PaymentRequirementDetails,
   ) => Promise<void>;
   preflightBalanceDeps?: PreflightBalanceDeps;
 };
 
 type ResponseStatusMetadata = {
   status: number | null;
+};
+
+type PaymentDisplayMetadata = PaymentMetadata & {
+  txSignature?: string;
+  flexSessionId?: string;
+  flexEscrow?: string;
 };
 
 type PaymentInfoOutput = {
@@ -85,6 +123,8 @@ type PaymentInfoOutput = {
     network: string;
     decimals?: number;
     txSignature?: string;
+    flexSessionId?: string;
+    flexEscrow?: string;
   };
   response?: {
     status: number | null;
@@ -98,6 +138,27 @@ type ConfirmPaymentArgs = {
   assetDisplay: string;
   networkDisplay: string;
 };
+
+type HistoryPaymentInfo = {
+  amount: string;
+  asset: string;
+  assetSymbol?: string;
+  decimals?: number;
+};
+
+export function isSelectedFlexInspectionRequirement(
+  requirement: PaymentRequirementInspection["requirements"][number],
+  selected: FlexRequirementDetails,
+): boolean {
+  const facilitator = requirement.extra?.facilitator;
+  return (
+    isFlexScheme(requirement.scheme) &&
+    requirement.network === formatPaymentOptionNetwork(selected.network) &&
+    requirement.assetAddress === selected.asset &&
+    typeof facilitator === "string" &&
+    facilitator === selected.facilitator
+  );
+}
 
 const USD_NORMALIZATION_STABLECOIN_SYMBOLS = new Set([
   "USDC",
@@ -213,14 +274,7 @@ function compareNormalizedDecimalStrings(left: string, right: string): number {
   return paddedLeft > paddedRight ? 1 : -1;
 }
 
-function normalizePaymentToUsd(
-  selection: ReturnType<typeof selectPaymentRequirement>,
-) {
-  if (selection.kind !== "selected") {
-    throw new Error("expected a selected payment requirement");
-  }
-
-  const { selected } = selection;
+function normalizePaymentToUsd(selected: PaymentRequirementDetails) {
   if (selected.symbol == null) {
     throw new Error(
       "selected payment asset could not be normalized to USD safely",
@@ -264,7 +318,7 @@ function canPromptForConfirmation(): boolean {
 async function promptForPaymentConfirmation(
   args: ConfirmPaymentArgs,
 ): Promise<boolean> {
-  const prompt = `This call will pay $${args.amountUsd} USD (${args.assetAmount} ${args.assetDisplay} on ${args.networkDisplay}), which exceeds spending.confirmAboveUsd=$${args.thresholdUsd}. Continue? [y/N] `;
+  const prompt = formatPaymentConfirmationPrompt(args);
   const readline = createInterface({
     input: process.stdin,
     output: process.stderr,
@@ -278,8 +332,27 @@ async function promptForPaymentConfirmation(
   }
 }
 
+function formatPaymentConfirmationPrompt(args: ConfirmPaymentArgs): string {
+  if (!isBrandOutputEnabled(process.stderr)) {
+    return `This call will pay $${args.amountUsd} USD (${args.assetAmount} ${args.assetDisplay} on ${args.networkDisplay}), which exceeds spending.confirmAboveUsd=$${args.thresholdUsd}. Continue? ${formatPromptChoice(process.stderr)} `;
+  }
+
+  return [
+    formatSectionTitle("Payment approval", process.stderr),
+    formatKeyValue("USD amount", `$${args.amountUsd}`, process.stderr),
+    formatKeyValue(
+      "Asset amount",
+      `${args.assetAmount} ${args.assetDisplay}`,
+      process.stderr,
+    ),
+    formatKeyValue("Network", args.networkDisplay, process.stderr),
+    formatKeyValue("Confirm above", `$${args.thresholdUsd}`, process.stderr),
+    `Continue? ${formatPromptChoice(process.stderr)} `,
+  ].join("\n");
+}
+
 function formatPaymentSummary(args: {
-  paymentInfo: PaymentMetadata;
+  paymentInfo: PaymentDisplayMetadata;
   responseStatus?: ResponseStatusMetadata;
 }): string {
   const { paymentInfo, responseStatus } = args;
@@ -289,12 +362,57 @@ function formatPaymentSummary(args: {
     asset: assetDisplay,
     ...(paymentInfo.decimals == null ? {} : { decimals: paymentInfo.decimals }),
   });
+
+  if (isBrandOutputEnabled(process.stderr)) {
+    return [
+      formatSectionTitle("Payment complete", process.stderr),
+      formatKeyValue(
+        "Amount",
+        brandStrong(`${amount} ${assetDisplay}`, process.stderr),
+        process.stderr,
+      ),
+      formatKeyValue("Network", paymentInfo.network, process.stderr),
+      ...(paymentInfo.txSignature == null
+        ? []
+        : [formatKeyValue("Tx", paymentInfo.txSignature, process.stderr)]),
+      ...(paymentInfo.flexSessionId == null
+        ? []
+        : [
+            formatKeyValue(
+              "Flex session",
+              paymentInfo.flexSessionId,
+              process.stderr,
+            ),
+          ]),
+      ...(responseStatus == null
+        ? []
+        : [
+            formatKeyValue(
+              "Response",
+              formatStatus(
+                formatResponseStatus(responseStatus.status),
+                responseStatus.status != null &&
+                  responseStatus.status >= 200 &&
+                  responseStatus.status < 300
+                  ? "success"
+                  : "danger",
+                process.stderr,
+              ),
+              process.stderr,
+            ),
+          ]),
+    ].join("\n");
+  }
+
   const parts = [
     `Payment: ${amount} ${assetDisplay} on ${paymentInfo.network}`,
   ];
 
   if (paymentInfo.txSignature != null) {
     parts.push(`tx ${paymentInfo.txSignature}`);
+  }
+  if (paymentInfo.flexSessionId != null) {
+    parts.push(`flex session ${paymentInfo.flexSessionId}`);
   }
 
   if (responseStatus != null) {
@@ -305,7 +423,7 @@ function formatPaymentSummary(args: {
 }
 
 function formatPaymentInfoOutput(args: {
-  paymentInfo: PaymentMetadata;
+  paymentInfo: PaymentDisplayMetadata;
   responseStatus?: ResponseStatusMetadata;
 }): PaymentInfoOutput {
   const { paymentInfo, responseStatus } = args;
@@ -327,6 +445,12 @@ function formatPaymentInfoOutput(args: {
       ...(paymentInfo.txSignature == null
         ? {}
         : { txSignature: paymentInfo.txSignature }),
+      ...(paymentInfo.flexSessionId == null
+        ? {}
+        : { flexSessionId: paymentInfo.flexSessionId }),
+      ...(paymentInfo.flexEscrow == null
+        ? {}
+        : { flexEscrow: paymentInfo.flexEscrow }),
     },
     ...(responseStatus == null
       ? {}
@@ -340,7 +464,7 @@ function formatPaymentInfoOutput(args: {
 
 function formatPaymentInfo(args: {
   format: OutputFormat;
-  paymentInfo: PaymentMetadata;
+  paymentInfo: PaymentDisplayMetadata;
   responseStatus?: ResponseStatusMetadata;
 }): string {
   if (args.format === "json") {
@@ -359,7 +483,7 @@ function writeOutcomeOutput(
     WrappedRunResult,
     { kind: "completed" } | { kind: "streamed-completed" }
   >,
-  paymentInfo?: PaymentMetadata,
+  paymentInfo?: PaymentDisplayMetadata,
   responseStatus?: ResponseStatusMetadata,
   paymentInfoFormat: OutputFormat = "table",
 ) {
@@ -404,6 +528,49 @@ function write402Error(message: string): void {
 
 function writeHistoryWarning(message: string): void {
   process.stderr.write(`Warning: ${message}\n`);
+}
+
+async function persistPaidCallHistory(args: {
+  persistHistory: typeof appendHistoryRecord;
+  config: ResolvedConfig;
+  tool: WrappedClient;
+  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+  retry: Extract<
+    WrappedRunResult,
+    { kind: "completed" } | { kind: "streamed-completed" }
+  >;
+  paymentInfo: HistoryPaymentInfo;
+  saveResponse: boolean;
+  txSignature?: string;
+}): Promise<void> {
+  const responseBody =
+    args.saveResponse && args.retry.kind === "completed"
+      ? args.retry.stdout
+      : undefined;
+
+  await args.persistHistory(
+    createHistoryRecord({
+      tool: args.tool,
+      url: args.firstAttempt.url,
+      responseStatus: args.retry.status,
+      amount: args.paymentInfo.amount,
+      asset: args.paymentInfo.asset,
+      ...(args.paymentInfo.assetSymbol == null
+        ? {}
+        : { assetSymbol: args.paymentInfo.assetSymbol }),
+      ...(args.paymentInfo.decimals == null
+        ? {}
+        : { decimals: args.paymentInfo.decimals }),
+      network: formatPaymentNetworkDisplay(args.config.payment.network),
+      walletAddress: args.config.activeWallet.address,
+      walletKind: args.config.activeWallet.kind,
+      ...(typeof args.firstAttempt.requestInit.method === "string"
+        ? { method: args.firstAttempt.requestInit.method }
+        : {}),
+      ...(args.txSignature == null ? {} : { txSignature: args.txSignature }),
+    }),
+    responseBody == null ? undefined : { responseBody },
+  );
 }
 
 function assertSaveResponseSupported(
@@ -474,15 +641,54 @@ function extractInlineFormatArg(args: string[]): {
   return format == null ? { args: nextArgs } : { args: nextArgs, format };
 }
 
-async function handle402Retry(args: {
-  deps: Pick<
-    CallDeps,
-    | "buildPaymentRetryHeader"
-    | "appendHistoryRecord"
-    | "runWrappedClient"
-    | "checkPreflightBalance"
-    | "preflightBalanceDeps"
-  >;
+async function promptForFlexConfirmation(
+  args: FlexConfirmArgs,
+): Promise<boolean> {
+  const asset = args.requirement.symbol ?? args.requirement.asset;
+  const amount = `${formatCompactDisplayTokenAmount({
+    amount: args.amount,
+    asset,
+    ...(args.requirement.decimals == null
+      ? {}
+      : { decimals: args.requirement.decimals }),
+  })} ${asset}`;
+  const prompt = formatFlexConfirmationPrompt(args, amount);
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  try {
+    const answer = await readline.question(prompt);
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    readline.close();
+  }
+}
+
+function formatFlexConfirmationPrompt(
+  args: FlexConfirmArgs,
+  amount: string,
+): string {
+  if (!isBrandOutputEnabled(process.stderr)) {
+    return args.kind === "create"
+      ? `Create a reusable Flex session and deposit ${amount}? ${formatPromptChoice(process.stderr)} `
+      : `Top up Flex session ${args.session.id} by ${amount}? ${formatPromptChoice(process.stderr)} `;
+  }
+
+  const heading =
+    args.kind === "create" ? "Create Flex session" : "Top up Flex session";
+  return [
+    formatSectionTitle(heading, process.stderr),
+    ...(args.kind === "topup"
+      ? [formatKeyValue("Session", args.session.id, process.stderr)]
+      : []),
+    formatKeyValue("Amount", amount, process.stderr),
+    `Continue? ${formatPromptChoice(process.stderr)} `,
+  ].join("\n");
+}
+
+type PaidRetryContext = {
   config: ResolvedConfig;
   tool: WrappedClient;
   clientArgs: string[];
@@ -490,99 +696,108 @@ async function handle402Retry(args: {
   paymentInfoFormat: OutputFormat;
   saveResponse: boolean;
   firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+};
+
+type PaidRetryHeader<TPaymentInfo> = {
+  header: RetryHeader;
+  paymentInfo: TPaymentInfo;
+};
+
+type CompletedPaidRetry = Extract<
+  WrappedRunResult,
+  { kind: "completed" } | { kind: "streamed-completed" }
+>;
+
+type PreparedPaidRetry<TPaymentInfo> = {
+  preflight: (() => Promise<void>) | null;
+  confirm: (() => Promise<boolean>) | null;
+  buildHeader: () => Promise<PaidRetryHeader<TPaymentInfo>>;
+  getOutputPaymentInfo: (
+    payment: PaidRetryHeader<TPaymentInfo>,
+    retry: CompletedPaidRetry,
+  ) => PaymentDisplayMetadata;
+  getHistoryPayment: (
+    payment: PaidRetryHeader<TPaymentInfo>,
+    retry: CompletedPaidRetry,
+  ) => { paymentInfo: HistoryPaymentInfo; txSignature?: string } | null;
+  retryFailureMessage: string;
+};
+
+async function runPaidRetry<TPaymentInfo>(args: {
+  deps: Pick<CallDeps, "appendHistoryRecord" | "runWrappedClient">;
+  context: PaidRetryContext;
+  prepared: PreparedPaidRetry<TPaymentInfo>;
 }): Promise<void> {
-  const checkPreflight =
-    args.deps.checkPreflightBalance ?? checkPreflightBalance;
-  const preflightBalanceDeps =
-    args.deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps;
-  const persistHistory = args.deps.appendHistoryRecord ?? appendHistoryRecord;
+  const { context, prepared } = args;
+  const persistHistory = args.deps.appendHistoryRecord;
 
   try {
-    await checkPreflight(args.config, args.firstAttempt, preflightBalanceDeps);
+    await prepared.preflight?.();
   } catch (err) {
     write402Error(err instanceof Error ? err.message : String(err));
     return;
   }
 
-  const payment = await args.deps.buildPaymentRetryHeader({
-    config: args.config,
-    url: args.firstAttempt.url,
-    response: args.firstAttempt.response,
-    requestInit: args.firstAttempt.requestInit,
-  });
+  if (prepared.confirm != null && !(await prepared.confirm())) {
+    return;
+  }
+
+  let payment: PaidRetryHeader<TPaymentInfo>;
+  try {
+    payment = await prepared.buildHeader();
+  } catch (err) {
+    write402Error(err instanceof Error ? err.message : String(err));
+    return;
+  }
+
   const retry = await args.deps.runWrappedClient({
-    tool: args.tool,
-    args: args.clientArgs,
+    tool: context.tool,
+    args: context.clientArgs,
     extraHeader: payment.header,
-    streamOutput: !args.saveResponse,
+    streamOutput: !context.saveResponse,
   });
   if (retry.kind === "completed" || retry.kind === "streamed-completed") {
-    const settledTransaction = extractPaymentResponseTransaction(retry.headers);
-    const paidCallInfo = args.printPaymentInfo
-      ? {
-          ...payment.paymentInfo,
-          asset: args.config.payment.asset,
-          network: formatPaymentNetworkDisplay(args.config.payment.network),
-          ...(settledTransaction == null
-            ? {}
-            : { txSignature: settledTransaction }),
-        }
+    const paidCallInfo = context.printPaymentInfo
+      ? prepared.getOutputPaymentInfo(payment, retry)
       : undefined;
-    const responseStatus = args.printPaymentInfo
+    const responseStatus = context.printPaymentInfo
       ? { status: retry.status }
       : undefined;
     writeOutcomeOutput(
       retry,
       paidCallInfo,
       responseStatus,
-      args.paymentInfoFormat,
+      context.paymentInfoFormat,
     );
-
-    const responseBody =
-      args.saveResponse && retry.kind === "completed"
-        ? retry.stdout
-        : undefined;
 
     if (retry.exitCode !== 0) {
       return;
     }
 
-    try {
-      await persistHistory(
-        createHistoryRecord({
-          tool: args.tool,
-          url: args.firstAttempt.url,
-          responseStatus: retry.status,
-          amount: payment.paymentInfo.amount,
-          asset: payment.paymentInfo.asset,
-          ...(payment.paymentInfo.assetSymbol == null
+    const historyPayment = prepared.getHistoryPayment(payment, retry);
+    if (historyPayment != null) {
+      try {
+        await persistPaidCallHistory({
+          persistHistory,
+          config: context.config,
+          tool: context.tool,
+          firstAttempt: context.firstAttempt,
+          retry,
+          paymentInfo: historyPayment.paymentInfo,
+          saveResponse: context.saveResponse,
+          ...(historyPayment.txSignature == null
             ? {}
-            : { assetSymbol: payment.paymentInfo.assetSymbol }),
-          ...(payment.paymentInfo.decimals == null
-            ? {}
-            : { decimals: payment.paymentInfo.decimals }),
-          network: formatPaymentNetworkDisplay(args.config.payment.network),
-          walletAddress: args.config.activeWallet.address,
-          walletKind: args.config.activeWallet.kind,
-          ...(typeof args.firstAttempt.requestInit.method === "string"
-            ? { method: args.firstAttempt.requestInit.method }
-            : {}),
-          ...(settledTransaction == null
-            ? {}
-            : { txSignature: settledTransaction }),
-        }),
-        responseBody == null ? undefined : { responseBody },
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      writeHistoryWarning(
-        args.saveResponse
-          ? `paid call succeeded, but history and saved response could not be persisted: ${message}`
-          : `paid call succeeded, but history could not be persisted: ${message}`,
-      );
-      return;
+            : { txSignature: historyPayment.txSignature }),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        writeHistoryWarning(
+          context.saveResponse
+            ? `paid call succeeded, but history and saved response could not be persisted: ${message}`
+            : `paid call succeeded, but history could not be persisted: ${message}`,
+        );
+      }
     }
-
     return;
   }
 
@@ -591,45 +806,154 @@ async function handle402Retry(args: {
     return;
   }
 
-  write402Error(
-    "server still returned 402 after payment or did not provide a supported x402 challenge",
-  );
+  write402Error(prepared.retryFailureMessage);
+}
+
+function prepareExactPaidRetry(args: {
+  deps: Pick<
+    CallDeps,
+    | "buildPaymentRetryHeader"
+    | "checkPreflightBalance"
+    | "preflightBalanceDeps"
+    | "canPromptForConfirmation"
+    | "confirmPayment"
+  >;
+  context: PaidRetryContext;
+  yes: boolean;
+  requirement: PaymentRequirementDetails;
+}): PreparedPaidRetry<PaymentMetadata> {
+  const checkPreflight =
+    args.deps.checkPreflightBalance ?? checkPreflightBalance;
+  const preflightBalanceDeps =
+    args.deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps;
+
+  return {
+    preflight: () =>
+      checkPreflight(
+        args.context.config,
+        args.context.firstAttempt,
+        preflightBalanceDeps,
+        args.requirement,
+      ),
+    confirm: () =>
+      maybeConfirmPayment({
+        deps: {
+          canPromptForConfirmation:
+            args.deps.canPromptForConfirmation ?? canPromptForConfirmation,
+          confirmPayment:
+            args.deps.confirmPayment ?? promptForPaymentConfirmation,
+        },
+        config: args.context.config,
+        yes: args.yes,
+        requirement: args.requirement,
+      }),
+    buildHeader: () =>
+      args.deps.buildPaymentRetryHeader({
+        config: args.context.config,
+        url: args.context.firstAttempt.url,
+        response: args.context.firstAttempt.response,
+        requestInit: args.context.firstAttempt.requestInit,
+        requirement: args.requirement,
+      }),
+    getOutputPaymentInfo: (payment, retry) => {
+      const settledTransaction = extractPaymentResponseTransaction(
+        retry.headers,
+      );
+      return {
+        ...payment.paymentInfo,
+        asset: args.context.config.payment.asset,
+        network: formatPaymentNetworkDisplay(
+          args.context.config.payment.network,
+        ),
+        ...(settledTransaction == null
+          ? {}
+          : { txSignature: settledTransaction }),
+      };
+    },
+    getHistoryPayment: (payment, retry) => {
+      const settledTransaction = extractPaymentResponseTransaction(
+        retry.headers,
+      );
+      return {
+        paymentInfo: payment.paymentInfo,
+        ...(settledTransaction == null
+          ? {}
+          : { txSignature: settledTransaction }),
+      };
+    },
+    retryFailureMessage:
+      "server still returned 402 after payment or did not provide a supported x402 challenge",
+  };
+}
+
+function prepareFlexPaidRetry(args: {
+  deps: Pick<CallDeps, "buildFlexPaymentRetryHeader">;
+  context: PaidRetryContext;
+  flexSession?: string;
+  allowCreateOrTopup: boolean;
+  confirm?: (args: FlexConfirmArgs) => Promise<boolean>;
+}): PreparedPaidRetry<FlexPaymentMetadata> {
+  const buildFlexRetry =
+    args.deps.buildFlexPaymentRetryHeader ?? buildFlexPaymentRetryHeader;
+
+  return {
+    preflight: null,
+    confirm: null,
+    buildHeader: async () => {
+      const payment = await buildFlexRetry({
+        config: args.context.config,
+        url: args.context.firstAttempt.url,
+        response: args.context.firstAttempt.response,
+        requestInit: args.context.firstAttempt.requestInit,
+        ...(args.flexSession == null ? {} : { sessionId: args.flexSession }),
+        allowCreateOrTopup: args.allowCreateOrTopup,
+        ...(args.confirm == null ? {} : { confirm: args.confirm }),
+        note: (message) =>
+          process.stderr.write(`${formatProgressNote(message)}\n`),
+      });
+      return payment;
+    },
+    getOutputPaymentInfo: (payment) => {
+      const { paymentInfo } = payment;
+      return {
+        ...paymentInfo,
+        network: formatPaymentNetworkDisplay(
+          args.context.config.payment.network,
+        ),
+        flexSessionId: paymentInfo.sessionId,
+        flexEscrow: paymentInfo.escrow,
+      };
+    },
+    getHistoryPayment: (payment) => {
+      const { amount, asset, assetSymbol, decimals } = payment.paymentInfo;
+      return {
+        paymentInfo: {
+          amount,
+          asset,
+          ...(assetSymbol == null ? {} : { assetSymbol }),
+          ...(decimals == null ? {} : { decimals }),
+        },
+      };
+    },
+    retryFailureMessage:
+      "server still returned 402 after Flex authorization or did not accept the session payment",
+  };
 }
 
 async function maybeConfirmPayment(args: {
   deps: Pick<CallDeps, "canPromptForConfirmation" | "confirmPayment">;
   config: ResolvedConfig;
   yes: boolean;
-  firstAttempt: Extract<WrappedRunResult, { kind: "payment-required" }>;
+  requirement: PaymentRequirementDetails;
 }): Promise<boolean> {
   const thresholdUsd = args.config.spending?.confirmAboveUsd;
   if (thresholdUsd == null) {
     return true;
   }
 
-  let paymentRequired;
-  try {
-    paymentRequired = await extractPaymentRequiredResponse(
-      args.firstAttempt.response.clone(),
-      args.firstAttempt.url,
-    );
-  } catch (err) {
-    write402Error(err instanceof Error ? err.message : String(err));
-    return false;
-  }
-
-  const selection = selectPaymentRequirement({
-    accepts: paymentRequired.accepts,
-    config: args.config,
-  });
-  if (selection.kind !== "selected") {
-    write402Error(formatPaymentRequirementMismatch(args.config, selection));
-    return false;
-  }
-
   let normalizedPayment;
   try {
-    normalizedPayment = normalizePaymentToUsd(selection);
+    normalizedPayment = normalizePaymentToUsd(args.requirement);
   } catch (err) {
     write402Error(
       `${err instanceof Error ? err.message : String(err)}; use --inspect to review the payment challenge before retrying`,
@@ -702,6 +1026,11 @@ export function createCallCommand(deps: CallDeps) {
         description:
           "Skip interactive payment confirmation when a call exceeds spending.confirmAboveUsd",
       }),
+      flexSession: option({
+        type: optional(string),
+        long: "flex-session",
+        description: "Use a specific stored Flex session id",
+      }),
       asset: option({
         type: optional(string),
         long: "asset",
@@ -717,6 +1046,7 @@ export function createCallCommand(deps: CallDeps) {
       paymentInfo,
       saveResponse,
       yes,
+      flexSession,
       asset,
       format: formatArg,
       tool,
@@ -748,10 +1078,53 @@ export function createCallCommand(deps: CallDeps) {
           result.response,
           result.url,
         );
-        printPaymentRequirementInspection(
-          format,
-          getPaymentRequirementInspection(paymentRequired),
-        );
+        const inspection = getPaymentRequirementInspection(paymentRequired);
+        if (hasFlexRequirements(paymentRequired.accepts)) {
+          try {
+            const { resolved } = await deps.loadRequiredConfig();
+            const selection = selectFlexRequirement({
+              accepts: paymentRequired.accepts,
+              config: resolved,
+            });
+            if (selection.kind === "selected") {
+              const views = await getFlexSessionViews({
+                config: resolved,
+                requirement: selection.selected,
+              });
+              for (const requirement of inspection.requirements) {
+                if (
+                  !isSelectedFlexInspectionRequirement(
+                    requirement,
+                    selection.selected,
+                  )
+                ) {
+                  continue;
+                }
+                requirement.flex = {
+                  facilitator: selection.selected.facilitator,
+                  matchingSessions: views.map((view) => ({
+                    id: view.session.id,
+                    status: view.session.status,
+                    escrow: view.session.escrow,
+                    ...(view.availableAmount == null
+                      ? {}
+                      : { onChainAvailableAmount: view.availableAmount }),
+                    ...(view.vaultBalanceAmount == null
+                      ? {}
+                      : { onChainVaultBalance: view.vaultBalanceAmount }),
+                    ...(view.pendingAmount == null
+                      ? {}
+                      : { onChainPendingAmount: view.pendingAmount }),
+                    ...(view.issue == null ? {} : { issue: view.issue }),
+                  })),
+                };
+              }
+            }
+          } catch {
+            // `call --inspect` stays read-only and useful even without config.
+          }
+        }
+        printPaymentRequirementInspection(format, inspection);
         return;
       }
 
@@ -791,31 +1164,20 @@ export function createCallCommand(deps: CallDeps) {
         }
       }
 
-      if (
-        !(await maybeConfirmPayment({
-          deps: {
-            canPromptForConfirmation:
-              deps.canPromptForConfirmation ?? canPromptForConfirmation,
-            confirmPayment: deps.confirmPayment ?? promptForPaymentConfirmation,
-          },
-          config: activeConfig,
-          yes,
-          firstAttempt: result,
-        }))
-      ) {
+      let paymentRequired: Awaited<
+        ReturnType<typeof extractPaymentRequiredResponse>
+      >;
+      try {
+        paymentRequired = await extractPaymentRequiredResponse(
+          result.response.clone(),
+          result.url,
+        );
+      } catch (err) {
+        write402Error(err instanceof Error ? err.message : String(err));
         return;
       }
 
-      await handle402Retry({
-        deps: {
-          buildPaymentRetryHeader: deps.buildPaymentRetryHeader,
-          runWrappedClient: deps.runWrappedClient,
-          appendHistoryRecord: deps.appendHistoryRecord ?? appendHistoryRecord,
-          checkPreflightBalance:
-            deps.checkPreflightBalance ?? checkPreflightBalance,
-          preflightBalanceDeps:
-            deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps,
-        },
+      const context = {
         config: activeConfig,
         tool: result.tool,
         clientArgs,
@@ -825,6 +1187,74 @@ export function createCallCommand(deps: CallDeps) {
           : "table",
         saveResponse,
         firstAttempt: result,
+      };
+
+      const resolution: PaymentAttemptResolution =
+        flexSession == null
+          ? resolvePaymentAttempt({
+              challenge: paymentRequired,
+              config: activeConfig,
+            })
+          : resolvePaymentAttempt({
+              challenge: paymentRequired,
+              config: activeConfig,
+              intent: { method: "flex" },
+            });
+
+      if (resolution.kind === "unresolved") {
+        write402Error(formatPaymentAttemptIssues(resolution.issues));
+        return;
+      }
+
+      if (resolution.attempt.method === "flex") {
+        const promptAllowed =
+          deps.canPromptForConfirmation ?? canPromptForConfirmation;
+        const canPrompt = !yes && promptAllowed();
+        const allowCreateOrTopup = yes || canPrompt;
+        await runPaidRetry({
+          deps: {
+            runWrappedClient: deps.runWrappedClient,
+            appendHistoryRecord: deps.appendHistoryRecord,
+          },
+          context,
+          prepared: prepareFlexPaidRetry({
+            deps: {
+              ...(deps.buildFlexPaymentRetryHeader == null
+                ? {}
+                : {
+                    buildFlexPaymentRetryHeader:
+                      deps.buildFlexPaymentRetryHeader,
+                  }),
+            },
+            context,
+            ...(flexSession == null ? {} : { flexSession }),
+            allowCreateOrTopup,
+            ...(canPrompt ? { confirm: promptForFlexConfirmation } : {}),
+          }),
+        });
+        return;
+      }
+      await runPaidRetry({
+        deps: {
+          runWrappedClient: deps.runWrappedClient,
+          appendHistoryRecord: deps.appendHistoryRecord,
+        },
+        context,
+        prepared: prepareExactPaidRetry({
+          deps: {
+            buildPaymentRetryHeader: deps.buildPaymentRetryHeader,
+            checkPreflightBalance:
+              deps.checkPreflightBalance ?? checkPreflightBalance,
+            preflightBalanceDeps:
+              deps.preflightBalanceDeps ?? defaultPreflightBalanceDeps,
+            canPromptForConfirmation:
+              deps.canPromptForConfirmation ?? canPromptForConfirmation,
+            confirmPayment: deps.confirmPayment ?? promptForPaymentConfirmation,
+          },
+          context,
+          requirement: resolution.attempt.requirement,
+          yes,
+        }),
       });
     },
   });
@@ -833,6 +1263,7 @@ export function createCallCommand(deps: CallDeps) {
 export const call = createCallCommand({
   loadRequiredConfig,
   buildPaymentRetryHeader,
+  buildFlexPaymentRetryHeader,
   runWrappedClient,
   appendHistoryRecord,
   checkPreflightBalance,
