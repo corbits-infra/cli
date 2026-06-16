@@ -3,7 +3,7 @@
 ![Corbits CLI ASCII banner](assets/corbits-ascii.svg)
 
 [Install](#install) · [Quick Start](#quick-start) ·
-[Common Workflows](#common-workflows) · [Flex](#manage-flex-sessions) ·
+[Common Workflows](#common-workflows) · [Flex](#flex-prepaid-sessions) ·
 [Command Reference](#command-reference) · [Development](#development)
 
 Command-line client for discovering x402-gated APIs, inspecting payment
@@ -33,11 +33,10 @@ The examples below use `corbits`. If you prefer `npx`, replace `corbits` with
 
 ## Quick Start
 
-Make a paid request in five steps.
+Make a paid request and review the local history entry.
 
-The examples use the Solana CLI default keypair and a real Corbits proxy from
-discovery. Use your own wallet and set `ENDPOINT_URL` to a discovered endpoint
-that currently returns `402 Payment Required`.
+The examples use the Solana CLI default keypair and a live x402 endpoint from
+CoinGecko. Use your own wallet and inspect the payment challenge before paying.
 
 ```bash
 # 1. Configure a wallet and payment network
@@ -51,25 +50,33 @@ corbits config init \
 corbits config show
 corbits balance
 
-# 3. Find a service and inspect it before paying
-corbits discover brave
-corbits inspect 73
+# 3. Find services and inspect catalog metadata before paying
+corbits discover
+corbits discover <search-term>
+corbits inspect PROXY_ID
 
-# 4. Probe a discovered endpoint URL without paying
-ENDPOINT_URL="https://<proxy-host>/<path-from-inspect>"
+# 4. Probe a live x402 challenge without paying
+ENDPOINT_URL="https://pro-api.coingecko.com/api/v3/x402/simple/price?ids=solana&vs_currencies=usd"
 corbits call --inspect curl "$ENDPOINT_URL"
 
 # 5. Call it when you are ready
 corbits call curl "$ENDPOINT_URL"
+
+# 6. Review local paid-call history
+corbits history
+corbits history show HISTORY_INDEX
 ```
 
 ## What Happened
 
 1. `discover` found APIs published through the Corbits discovery API.
-2. `inspect` showed endpoint metadata, pricing, and OpenAPI details.
+2. `inspect` showed endpoint metadata, pricing, and OpenAPI details for a
+   selected proxy.
 3. `call --inspect` parses the live x402 challenge without paying when the
    endpoint returns `402 Payment Required`.
 4. `call` signs a payment with the configured wallet and retries the request.
+5. `history` shows local paid-call metadata. Use the table's `#` value with
+   `history show` to inspect one entry.
 
 ## Common Workflows
 
@@ -85,7 +92,7 @@ Start here when you already know what you want to do.
 | Make a paid request               | `corbits call curl`                     |
 | Manage Flex sessions              | `corbits flex status`                   |
 | Review paid-call history          | `corbits history`                       |
-| Produce script-friendly output    | `--format json` or `NO_DNA=1`           |
+| Choose output formats             | `--format json` or `NO_DNA=1`           |
 | See every command in compact form | [Command Reference](#command-reference) |
 
 ### Find APIs
@@ -154,12 +161,13 @@ that network's default payment asset.
 ### Call Paid Endpoints
 
 `call` wraps the real system `curl` or `wget`. It detects
-`402 Payment Required`, builds the x402 payment header, and retries once.
-Use an endpoint URL from `inspect` that currently returns an x402 challenge.
+`402 Payment Required`, builds the x402 payment header, and retries once. The
+CoinGecko example below is a live x402 endpoint that returns a payment
+challenge before any paid retry.
 
 ```bash
 # Inspect first, without paying
-ENDPOINT_URL="https://<proxy-host>/<path-from-inspect>"
+ENDPOINT_URL="https://pro-api.coingecko.com/api/v3/x402/simple/price?ids=solana&vs_currencies=usd"
 corbits call --inspect curl "$ENDPOINT_URL"
 corbits call --inspect --format json curl "$ENDPOINT_URL"
 
@@ -169,10 +177,7 @@ corbits call --yes curl "$ENDPOINT_URL"
 corbits call --asset USDC curl "$ENDPOINT_URL"
 
 # Preserve normal curl and wget shape
-corbits call curl "$ENDPOINT_URL" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
+corbits call curl "$ENDPOINT_URL" -H "Accept: application/json"
 
 corbits call wget "$ENDPOINT_URL"
 ```
@@ -189,7 +194,7 @@ Options:
 - For `wget`, Corbits injects `--server-response` when needed so it can detect
   the challenge.
 
-### Manage Flex Sessions
+### Flex Prepaid Sessions
 
 Flex is Faremeter's payment scheme for prepaid escrow and off-chain
 authorization in variable-cost or high-frequency flows. See the
@@ -232,11 +237,12 @@ Corbits stores history at `$XDG_DATA_HOME/corbits/history.jsonl` or
 `~/.local/share/corbits/history.jsonl`. Table output includes the stable `#`
 index used by `history show <index>`.
 
-### Automation Output
+### Output Formats
 
-All commands support `--format` (`-f`) with `table`, `json`, or `yaml`.
+Use `--format` when another tool, script, or agent needs to read Corbits
+results. Every command supports `table`, `json`, and `yaml`.
 
-When `--format` is omitted, Corbits resolves the output format in this order:
+When `--format` is omitted, Corbits chooses the output format in this order:
 
 1. The explicit `--format` flag
 2. `json` when `NO_DNA` is set to a non-empty value
