@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="150" viewBox="0 0 620 150" role="img" aria-labelledby="title desc">
+  <title id="title">Corbits CLI ASCII banner</title>
+  <desc id="desc">A terminal-style ASCII art banner spelling Corbits in orange.</desc>
+  <text x="0" y="24" fill="#e98428" font-family="Menlo, Consolas, 'Liberation Mono', monospace" font-size="22" font-weight="700" xml:space="preserve">
+    <tspan x="0" dy="0">  ____           _     _ _       </tspan>
+    <tspan x="0" dy="28"> / ___|___  _ __| |__ (_) |_ ___ </tspan>
+    <tspan x="0" dy="28">| |   / _ \| '__| '_ \| | __/ __|</tspan>
+    <tspan x="0" dy="28">| |__| (_) | |  | |_) | | |_\__ \</tspan>
+    <tspan x="0" dy="28"> \____\___/|_|  |_.__/|_|\__|___/</tspan>
+  </text>
+</svg>
