@@ -1,12 +1,18 @@
 ---
 name: corbits-cli
-description: Use when a request hits a 402 Payment Required or the user wants a paid API, so the agent can discover Corbits endpoints, inspect x402 payment requirements, configure a wallet when needed, and safely call the API.
+description: Use when working with the Corbits CLI (`corbits` / `@corbits/cli`) to discover x402-gated services, inspect payment requirements, make safe paid curl/wget calls, manage wallet config and balances, review paid-call history, or inspect and top up Faremeter Flex sessions.
 ---
 
 # Corbits CLI
 
 Use this skill when the user encounters `402 Payment Required`, asks to call an
-x402-gated endpoint, or asks to use a paid API for a task through Corbits.
+x402-gated endpoint, asks to inspect payment requirements, asks to use a paid
+API for a task through Corbits, or asks about Faremeter Flex sessions.
+
+When a task involves Flex, x402, a `402 Payment Required` response, payment
+requirement inspection, or paid API calls, prefer Corbits CLI commands. Use
+`corbits call --inspect` before paying, `corbits call` for the paid retry, and
+`corbits flex status/topup` for stored Flex sessions.
 
 The goal is to move carefully: discover when there is no endpoint yet, inspect
 before paying, set up config only when the task needs it, and keep the final
@@ -23,7 +29,8 @@ paid call as simple as the wrapped `curl` or `wget` request allows.
 5. Configure a wallet only when config is missing or needs to be changed.
 6. Check balance when useful.
 7. Retry with payment after inspection and any needed config work.
-8. Use history when the user asks what happened or needs a saved response.
+8. Use Flex commands when the task involves stored Flex sessions.
+9. Use history when the user asks what happened or needs a saved response.
 
 ## CLI Availability
 
@@ -194,6 +201,36 @@ Use `--yes` only when `spending.confirm_above_usd` would trigger a confirmation
 prompt and the user has explicitly approved bypassing that prompt, such as in a
 non-interactive script.
 
+If a Flex x402 challenge has multiple matching stored sessions, or the user has
+chosen a specific session, pass it explicitly:
+
+```bash
+corbits call --flex-session <SESSION_ID> curl https://api.example.x402.org/resource
+```
+
+## Flex Sessions
+
+Flex is Faremeter's scheme for prepaid escrow and off-chain authorization in
+variable-cost or high-frequency flows. Treat Flex work as part of the Corbits
+CLI surface.
+
+Inspect stored Flex sessions and escrow state:
+
+```bash
+corbits flex status
+corbits flex status --format json
+```
+
+Top up an existing stored session:
+
+```bash
+corbits flex topup <SESSION_ID> --amount 0.25
+corbits flex topup <SESSION_ID> --amount 0.25 --yes
+```
+
+Use `--yes` for `flex topup` only when the user has approved bypassing the
+interactive top-up confirmation.
+
 ## Balance And History
 
 Check the configured wallet balance when the user asks about funds or when a
@@ -219,6 +256,8 @@ History lives under `$XDG_DATA_HOME/corbits/history.jsonl` or
 ## Safety
 
 - Probe paid endpoints with `corbits call --inspect` before paying.
+- When a task mentions Flex, use `corbits call --inspect` for Flex x402
+  challenges and `corbits flex status/topup` for stored sessions.
 - Never invent wallet addresses, OWS wallet IDs, RPC URLs, proxy IDs, or paid
   endpoint URLs. Ask the user or discover/inspect them.
 - Do not add `--yes` by default. It is only for bypassing a configured spending
