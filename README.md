@@ -16,7 +16,7 @@
 Command-line client for discovering x402-gated APIs, inspecting payment
 requirements, and paying with `curl` or `wget`.
 
-Prices are displayed in USD.
+Prices are displayed in USDC.
 
 ## Install
 
@@ -43,7 +43,8 @@ Make a paid request and review the local history entry.
 
 The examples use the Solana CLI default keypair and a live x402 endpoint found
 with Corbits discovery. Use your own wallet and inspect the payment challenge
-before paying.
+before paying. Replace `SEARCH_TERM`, `PROXY_ID`, and `ENDPOINT_URL` with
+values from discovery and inspect output.
 
 ```bash
 # 1. Configure a wallet and payment network
@@ -58,11 +59,11 @@ corbits config show
 corbits balance
 
 # 3. Find services and inspect catalog metadata before paying
-corbits discover tokensxyz
-corbits inspect 90
+corbits discover SEARCH_TERM
+corbits inspect PROXY_ID
 
 # 4. Probe a live x402 challenge without paying
-ENDPOINT_URL="https://tokensxyz.api.corbits.dev/v1/assets/curated"
+ENDPOINT_URL="ENDPOINT_URL"
 corbits call --inspect curl "$ENDPOINT_URL"
 
 # 5. Call it when you are ready
@@ -184,17 +185,17 @@ to query a wallet outside the active config.
 ### Call Paid Endpoints
 
 `call` wraps the real system `curl` or `wget`. It detects
-`402 Payment Required`, builds the x402 payment header, and retries once. The
-example below uses an endpoint from `corbits discover tokensxyz` and
-`corbits inspect 90` that returns a payment challenge before any paid retry.
+`402 Payment Required`, builds the x402 payment header, and retries once. Use
+`discover` and `inspect` to choose an endpoint that returns a payment challenge
+before any paid retry.
 
 ```bash
 # Find and inspect the catalog entry first
-corbits discover tokensxyz
-corbits inspect 90
+corbits discover SEARCH_TERM
+corbits inspect PROXY_ID
 
 # Inspect first, without paying
-ENDPOINT_URL="https://tokensxyz.api.corbits.dev/v1/assets/curated"
+ENDPOINT_URL="ENDPOINT_URL"
 corbits call --inspect curl "$ENDPOINT_URL"
 corbits call --inspect --format json curl "$ENDPOINT_URL"
 
